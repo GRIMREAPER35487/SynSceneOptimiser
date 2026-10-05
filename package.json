@@ -1,0 +1,26 @@
+{
+  "name": "com.synthos.scene-optimizer",
+  "displayName": "Synthos Scene Optimizer",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "Comprehensive scene and world optimization suite for VRChat. Features automatic texture VRAM reduction, mesh decimation & compression, GPU instancing enabler, audio & particle optimization, and mirror reflection mask tuning.",
+  "author": {
+    "name": "Synthos",
+    "url": "https://github.com/GRIMREAPER35487"
+  },
+  "keywords": [
+    "vrchat",
+    "optimization",
+    "vram",
+    "mesh",
+    "texture",
+    "scene",
+    "performance"
+  ],
+  "dependencies": {
+    "com.vrchat.base": ">=3.5.0"
+  },
+  "vpmDependencies": {
+    "com.vrchat.base": ">=3.5.0"
+  }
+}
