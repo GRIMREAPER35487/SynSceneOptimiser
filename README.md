@@ -21,4 +21,4 @@ Add the Synthos package repository:
 ```
 https://grimreaper35487.github.io/Synthos-VRC-Packages/index.json
 ```
-Then search for **Synthos Scene Optimizer** in the Creator Companion or ALCOM and click **Install**.
+Then search for **Synthos Scene Optimizer** in the Creator Companion or ALCOM and click **Install** (it will automatically install **Meshia Mesh Simplification (Synthos Edition)** as a dependency).
