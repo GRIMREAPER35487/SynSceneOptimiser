@@ -98,24 +98,6 @@ namespace Synthos.SynSceneOptimizer
             {
                 SynVRAMAnalyzerWindow.ShowWindow();
             }
-            GUILayout.Space(10);
-            if (GUILayout.Button("Open Frame Exporter", GUILayout.Width(150), GUILayout.Height(20)))
-            {
-                Type exporterType = Type.GetType("Synthos.SynSceneOptimizer.SynFrameDebuggerExporterWindow, Synthos.SynFrameDebugger.Editor")
-                                 ?? Type.GetType("Synthos.SynSceneOptimizer.SynFrameDebuggerExporterWindow");
-                if (exporterType != null)
-                {
-                    EditorWindow.GetWindow(exporterType, false, "Syn Frame Exporter").Show();
-                }
-                else
-                {
-                    EditorUtility.DisplayDialog(
-                        "Syn Frame Exporter",
-                        "Syn Frame Exporter is not installed or not loaded.\n\nYou can install Synthos Frame Debugger Exporter via the Synthos VPM repository or open it via Window > Synthos > Syn Frame Exporter.",
-                        "OK"
-                    );
-                }
-            }
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             
