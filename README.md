@@ -22,3 +22,9 @@ Add the Synthos package repository:
 https://grimreaper35487.github.io/Synthos-VRC-Packages/index.json
 ```
 Then search for **Synthos Scene Optimizer** in the Creator Companion or ALCOM and click **Install** (it will automatically install **Meshia Mesh Simplification (Synthos Edition)** as a dependency).
+
+## Credits & Acknowledgments
+
+- **Texture Compression Algorithm:** Adapted from and inspired by [avatar-compressor](https://github.com/Limitex/avatar-compressor) by **Limitex** (MIT License).
+- **Mesh Decimation Engine:** Powered by [Meshia](https://github.com/RamType0/Meshia.MeshSimplification) by **Ram.Type-0** (MIT License).
+
