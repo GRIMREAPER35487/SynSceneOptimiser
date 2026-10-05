@@ -18,9 +18,11 @@
     "performance"
   ],
   "dependencies": {
-    "com.vrchat.base": ">=3.5.0"
+    "com.vrchat.base": ">=3.5.0",
+    "com.synthos.meshia": ">=3.2.0"
   },
   "vpmDependencies": {
-    "com.vrchat.base": ">=3.5.0"
+    "com.vrchat.base": ">=3.5.0",
+    "com.synthos.meshia": ">=3.2.0"
   }
 }
