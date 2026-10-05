@@ -1,0 +1,22 @@
+{
+    "name": "Synthos.SynSceneOptimizer.Editor",
+    "rootNamespace": "Synthos.SynSceneOptimizer",
+    "references": [
+        "Synthos.SynSceneOptimizer.Runtime",
+        "VRC.SDKBase",
+        "VRC.SDKBase.Editor",
+        "Meshia.MeshSimplification.Runtime",
+        "Meshia.MeshSimplification.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

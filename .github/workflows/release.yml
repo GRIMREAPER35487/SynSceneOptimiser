@@ -1,0 +1,43 @@
+name: Release Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve Version and Package Name
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ]; then
+            VERSION="1.0.0"
+          fi
+          PKG_NAME="com.synthos.scene-optimizer"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "PKG_NAME=$PKG_NAME" >> $GITHUB_OUTPUT
+          echo "ZIP_NAME=${PKG_NAME}-${VERSION}.zip" >> $GITHUB_OUTPUT
+
+      - name: Create release zip
+        run: |
+          mkdir -p build
+          zip -r "build/${{ steps.version.outputs.ZIP_NAME }}" . -x ".git/*" ".github/*" "build/*" ".gitignore" "*.old" "*.old.meta"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/${{ steps.version.outputs.ZIP_NAME }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false

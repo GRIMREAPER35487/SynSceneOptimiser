@@ -1,0 +1,48 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e9264cc89e78e39478989649a3b4f14d, type: 3}
+  m_Name: SynProtectionSettings
+  m_EditorClassIdentifier: 
+  protectedSceneObjects:
+  - directAsset: {fileID: 0}
+    globalObjectId: GlobalObjectId_V1-2-c35c0d561bc5d9e40beaf3d08e64e711-3409920424497772040-354734729
+    scenePath: ORG FOLDER/Expand Decor/GamesTogg/Games/EmyChess
+    name: EmyChess
+  protectedGameObjects: []
+  protectedMaterials:
+  - {fileID: 2100000, guid: c743985be2822934faa8c8bc5393de61, type: 2}
+  - {fileID: 2100000, guid: 15e748cf2f61974428c53b0f2cf0d44c, type: 2}
+  - {fileID: 2100000, guid: 1f66b38f8a8f4e04eb03b24df457c327, type: 2}
+  - {fileID: 2100000, guid: 62f563c9cfedbb24f9ffb95ef6a32215, type: 2}
+  - {fileID: 2100000, guid: ea31af831ee64e1449dcf00637ceefcb, type: 2}
+  - {fileID: 2100000, guid: 6a1d0168e6c4c5e4a864c4e9c10653b7, type: 2}
+  - {fileID: 2100000, guid: ff625808cb6489c4f89ab2d2f39ecd48, type: 2}
+  - {fileID: 2100000, guid: 6fad75c6995fcf44cb789acc5ba14e9f, type: 2}
+  - {fileID: 2100000, guid: 225229e510f26c043a6072ce10104ac7, type: 2}
+  - {fileID: 2100000, guid: 3845606bb1ae1b844a8cad7bc8bfd8ed, type: 2}
+  - {fileID: 2100000, guid: ab630c85429be0e4399714633ab62c1c, type: 2}
+  - {fileID: 2100000, guid: f4d6e3b9923103c4bb3f078021c031c2, type: 2}
+  protectedMeshes:
+  - {fileID: 7247909792828534167, guid: 0b62a28ee619da344852e184982a1556, type: 3}
+  protectedTextures:
+  - {fileID: 2800000, guid: 36c24c3df93e09a43837277c714289b6, type: 3}
+  protectedTextureNamePatterns: []
+  simplifierPreserveList:
+  - directAsset: {fileID: 0}
+    globalObjectId: GlobalObjectId_V1-2-c35c0d561bc5d9e40beaf3d08e64e711-3904816817749631404-1381403871
+    scenePath: Pillows/Pillow (2)/Pillow_L
+    name: Pillow_L
+  - directAsset: {fileID: 0}
+    globalObjectId: GlobalObjectId_V1-2-c35c0d561bc5d9e40beaf3d08e64e711-4959403492883556869-126512797
+    scenePath: Pillows/Pillow/Pillow_S
+    name: Pillow_S
+  simplifierSkipList: []
