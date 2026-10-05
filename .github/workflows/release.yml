@@ -21,13 +21,14 @@ jobs:
         id: version
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          if [ -z "$VERSION" ]; then
-            VERSION="1.0.0"
+          if [ -z "$VERSION" ] || [ "$GITHUB_REF_NAME" = "main" ]; then
+            VERSION=$(jq -r .version package.json)
           fi
-          PKG_NAME="com.synthos.scene-optimizer"
+          PKG_NAME=$(jq -r .name package.json)
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "PKG_NAME=$PKG_NAME" >> $GITHUB_OUTPUT
           echo "ZIP_NAME=${PKG_NAME}-${VERSION}.zip" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=v${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Create release zip
         run: |
@@ -38,6 +39,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: build/${{ steps.version.outputs.ZIP_NAME }}
+          tag_name: ${{ steps.version.outputs.TAG_NAME }}
           generate_release_notes: true
           draft: false
           prerelease: false
