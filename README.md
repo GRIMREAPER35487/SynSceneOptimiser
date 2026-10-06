@@ -65,6 +65,12 @@ Comprehensive VRChat scene and world optimization suite for Unity. Features auto
    - View your active platform cache statistics directly in the main window.
    - Use **Clear PC Cache**, **Clear Android Cache**, or **Clear All Platforms** anytime you want to clear cached assets for a fresh build.
 
+## Requirements
+
+- **Unity 2022.3** (VRChat world development environment)
+- **VRChat World SDK (SDK3)**
+- **Mochie Shaders:** This tool is designed primarily around [Mochie's Unity Shaders](https://github.com/Mochies-Code/Mochies-Unity-Shaders). Its material analysis, texture property mapping, packed map detection, and mobile shader fallback passes are deeply tailored for Mochie shaders (e.g., Mochie Standard and Standard Lite). While Unity Standard shaders are supported, worlds using Mochie shaders will receive the highest compatibility and optimization efficiency.
+
 ## Installation via VPM (VRChat Creator Companion)
 
 Add the Synthos package repository:
