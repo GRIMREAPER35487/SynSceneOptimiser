@@ -32,6 +32,39 @@ Comprehensive VRChat scene and world optimization suite for Unity. Features auto
 - **VRAM Analyzer Window:** Interactive diagnostic window that provides a real-time, categorized breakdown of scene memory usage across textures, meshes, and materials. Helps identify high-consumption assets, previews projected optimization gains, and exports persistent build reports.
 - **Automatic Legacy Migration:** Detects and seamlessly migrates cache files and settings from older optimizer iterations (`Assets/SynSceneOpti_v2` / `Assets/SynSceneOptimiser`) into the modern unified cache structure without breaking asset GUIDs or project references.
 
+## How It Works
+
+- **Automated Scene Processing Pipeline:** Hooks directly into Unity's `IProcessSceneWithReport` build lifecycle. When building or publishing a world via the VRChat SDK, the optimizer runs automatically on a temporary staging copy of the scene. Your original saved scene file (`.unity`) remains untouched.
+- **Deterministic Multi-Platform Cache:** Generated assets (downscaled textures, decimated meshes, combined materials) are stored under an isolated cache directory (`Assets/SynSceneOptimizer_Cache/{Platform}/`). Assets are hashed against their content and optimization settings, ensuring blazing-fast iterative builds where only modified assets are re-processed.
+- **Virtual Staging & Asset Compactor:** Uses an in-memory staging layer (`SynPipelineCompactor`) to manage material property changes, GPU instancing flags, and mesh assignments during build packaging, avoiding permanent mutation of project source files.
+- **Play Mode Testing:** When entering Play Mode, the optimizer can automatically stage optimizations in-place so you can benchmark framerates and memory in real-time, cleanly reverting temporary changes upon returning to Edit Mode.
+- **Smart Asset Protection:** Automatically recognizes and protects delicate lighting assets (Bakery lightmaps, directional maps, volumes) and Mochie shader lookup maps, ensuring visual fidelity while optimizing everything else around them.
+
+## How to Use
+
+1. **Open the Optimizer Window:**
+   - In the Unity menu bar, navigate to **Window** → **Synthos** → **Syn Scene Optimizer**.
+
+2. **Select & Configure Passes:**
+   - In the **Optimizers** tab, enable or disable individual passes according to your world's needs.
+   - Tune resolution caps (PC vs. Android/Quest), complexity thresholds, decimation targets, and particle clamping limits.
+   - Use the **General Fixes** tab to toggle scene-level utilities like reflection probe automation and material slot trimming.
+
+3. **Protect Specific Assets (Optional):**
+   - Open **Window** → **Synthos** → **Protected Objects** (or use the drag-and-drop boxes in the optimizer window) to protect critical GameObjects, textures, or materials from being altered.
+   - For mesh decimation, use the **Skip List** or **Preservation List** within the Mesh Simplifier settings to preserve hero assets.
+
+4. **Inspect Scene Memory (Optional):**
+   - Click **Open VRAM Analyzer** in the main window (or navigate to **Window** → **Synthos** → **VRAM Analyzer**) to get an interactive, real-time diagnostic breakdown of your scene's texture, mesh, and material memory usage before and after optimizing.
+
+5. **Build or Test Your World:**
+   - Simply build and upload your world using the **VRChat SDK Control Panel** (or enter **Play Mode** in Unity).
+   - Syn Scene Optimizer executes automatically in the background, logs detailed memory savings to the Unity Console, and packages the optimized build.
+
+6. **Manage Cache:**
+   - View your active platform cache statistics directly in the main window.
+   - Use **Clear PC Cache**, **Clear Android Cache**, or **Clear All Platforms** anytime you want to clear cached assets for a fresh build.
+
 ## Installation via VPM (VRChat Creator Companion)
 
 Add the Synthos package repository:
