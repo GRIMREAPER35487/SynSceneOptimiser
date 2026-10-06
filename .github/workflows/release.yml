@@ -43,3 +43,20 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
+      - name: Trigger VPM Listing Rebuild
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.VPM_REPO_TOKEN }}
+        run: |
+          if [ -n "$GH_TOKEN" ]; then
+            echo "Triggering Synthos-VRC-Packages build listing..."
+            gh workflow run build-listing.yml --repo GRIMREAPER35487/Synthos-VRC-Packages || \
+            curl -s -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              https://api.github.com/repos/GRIMREAPER35487/Synthos-VRC-Packages/dispatches \
+              -d '{"event_type":"package-released"}' || true
+          else
+            echo "VPM_REPO_TOKEN secret not configured; skipping trigger."
+          fi
