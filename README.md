@@ -9,16 +9,28 @@ Comprehensive VRChat scene and world optimization suite for Unity. Features auto
 
 ## Features
 
-- **Smart Texture VRAM Optimizer:** Analyzes texture entropy, visual detail, and screen footprint to reduce unnecessary VRAM usage without perceptible loss in quality. Generated textures are saved to an isolated cache, leaving original files untouched.
-- **Mesh Simplifier:** High-performance mesh decimation powered by Meshia with configurable thresholds, scene triangle caps, preservation lists, and skip lists. Generates simplified mesh copies in the cache without altering original model files.
-- **Mesh VRAM Optimizer:** Reduces vertex data overhead and strips unnecessary vertex channels into cached mesh copies.
-- **Mesh Deduplicator:** Detects identical meshes and unifies them in the scene to save memory.
-- **GPU Instancing Enabler:** Automatically flags compatible materials for hardware GPU instancing.
-- **Audio Optimizer** *(⚠️ Destructive)*: Audits AudioSources and clips for optimal compression, mono channels, and load types. Directly modifies and re-imports your project's AudioClip import settings on disk.
-- **Particle System Optimizer:** Caps max particle emissions and tunes prewarm settings.
-- **Mirror Layer Mask Optimizer:** Ensures VRChat mirrors don't redundantly draw heavy layers.
-- **VRAM Analyzer Window:** Live diagnostics tracking texture, mesh, and material memory footprint.
-- **Automatic Legacy Migration:** Seamlessly moves legacy cache and settings from earlier versions (`Assets/SynSceneOpti_v2` / `Assets/SynSceneOptimiser`) into modern project locations without breaking asset GUIDs.
+- **Smart Texture VRAM Optimizer:** Analyzes scene textures using Sobel edge detection and spatial frequency algorithms (derived from Avatar Compressor) to identify low-frequency, flat, or simple textures (e.g., solid walls, plain floors). Dynamically downscales them (e.g., from 2048 to 512 or 256) while retaining full resolution for high-detail textures and normal maps. Automatically protects Bakery lightmaps and Mochie shader assets, with full support for custom drag-and-drop exclusions. Generated assets are saved into the per-platform cache.
+- **Mesh Simplifier:** High-performance polygon reduction powered by Meshia (Quadric Error Metrics). Supports target scene triangle budgets, configurable decimation thresholds, and platform-specific profiles (PC vs. Mobile/Quest). Preserves UV borders, lightmap seams (UV1/UV2), normals, and blend shapes to prevent visual artifacts. Includes a dedicated Skip List to leave hero assets untouched and a Preservation List for custom decimation ratios.
+- **Mesh Memory Optimizer:** Reduces vertex data overhead across all scene meshes. Converts UV3 Texture Array slice channels into compact 2-component Vector2 coordinates (cutting UV3 memory footprint in half), strips unreferenced or empty vertex channels (such as zeroed tangents, unused UVs, and default vertex colors), and purges intermediate mesh clones to save memory.
+- **Mesh Deduplicator & Instancer:** Scans the scene for geometrically identical meshes across different GameObjects and unifies their references to point to a single master mesh instance. Automatically clears the `Batching Static` flag on unified objects so Unity can batch them together via hardware GPU instancing, drastically reducing unique mesh memory.
+- **GPU Instancing Enabler:** Audits materials used across multiple scene renderers and automatically enables GPU Instancing where applicable. Combines draw calls for dynamic objects and unbatched statics into efficient hardware instanced batches, reducing CPU render thread overhead with zero visual penalty.
+- **Audio Clip Optimizer** *(⚠️)*: Scans scene audio sources or the entire project to audit audio clips and automatically configure optimal compression formats, load types, and sample rates based on file size:
+  - **Loops & Music (> 1 MB):** Vorbis compression with Streaming load type and 44.1 kHz sample rate to prevent massive RAM spikes.
+  - **Interaction Sounds (100 KB – 1 MB):** ADPCM compression with Compressed In Memory.
+  - **Short Sound FX (< 100 KB):** ADPCM compression with Decompress On Load for zero latency and low CPU overhead.
+- **Particle System Safety Clamping:** Audits every `ParticleSystem` in the scene, calculates realistic max particle counts based on emission rates, lifetimes, and bursts, and clamps maximum capacity to prevent accidental runaway particle counts from tanking player framerates. Forces off-screen culling to `Pause` so dormant particle systems don't waste CPU/GPU simulation cycles.
+- **Mirror Layer Mask Optimizer:** Detects VRChat Mirror Reflection components and automatically sanitizes their reflection culling masks. Strips heavy, non-essential rendering layers (such as UI, UiMenu, Water, StereoLeft, StereoRight, and custom-defined layers) to eliminate redundant double-draw overhead when players look at mirrors.
+- **Structural Cleanup Passes:** A suite of lightweight scene cleanups that eliminate hidden rendering leaks:
+  - **Material Slot Trimmer:** Truncates excess, empty, or unassigned material array slots on renderers that exceed the mesh's actual submesh count.
+  - **Material Reflection Optimizer:** Disables reflection probe usage on renderers whose materials have low smoothness/specular values, skipping pointless cubemap lookups.
+  - **Light Probe Optimizer:** Turns off light probe sampling on static objects that are already lit by baked lightmaps.
+  - **Ghost Texture Purger:** Removes orphaned, unused texture properties left behind in material serialization data.
+- **Mipmap Streaming & Mobile Passes:**
+  - **Mipmap Streaming Enabler:** Enables texture streaming across meshes, particles, UI, and terrain to dynamically stay within GPU VRAM budgets (automatically restored after build).
+  - **Disable Stochastic Sampling:** Automatically disables expensive stochastic texture sampling on mobile/Quest (Android & iOS) builds for maximum performance.
+  - **Mobile Shader Fallback:** Automatically swaps heavy desktop PC shaders to lightweight mobile-ready alternatives during Android builds.
+- **VRAM Analyzer Window:** Interactive diagnostic window that provides a real-time, categorized breakdown of scene memory usage across textures, meshes, and materials. Helps identify high-consumption assets, previews projected optimization gains, and exports persistent build reports.
+- **Automatic Legacy Migration:** Detects and seamlessly migrates cache files and settings from older optimizer iterations (`Assets/SynSceneOpti_v2` / `Assets/SynSceneOptimiser`) into the modern unified cache structure without breaking asset GUIDs or project references.
 
 ## Installation via VPM (VRChat Creator Companion)
 
