@@ -29,6 +29,7 @@ Comprehensive VRChat scene and world optimization suite for Unity. Features auto
   - **Mipmap Streaming Enabler:** Enables texture streaming across meshes, particles, UI, and terrain to dynamically stay within GPU VRAM budgets (automatically restored after build).
   - **Disable Stochastic Sampling:** Automatically disables expensive stochastic texture sampling on mobile/Quest (Android & iOS) builds for maximum performance.
   - **Mobile Shader Fallback:** Automatically swaps heavy desktop PC shaders to lightweight mobile-ready alternatives during Android builds.
+- **Auto Reflection Probe Baker (Bakery Fix):** Located under the **General Fixes** tab. Hooks directly into Bakery GPU Lightmapper's bake completion events (`OnFinishedFullRender` / `OnFinishedProbes`). When a lightmap bake completes, it automatically triggers reflection probe baking and automatically re-enables any reflection probes Bakery left disabled, ensuring reflection probes are never left unbaked, black, or cleared in your final world. Also provides one-click manual buttons to trigger probe bakes and re-enable probes on demand.
 - **VRAM Analyzer Window:** Interactive diagnostic window that provides a real-time, categorized breakdown of scene memory usage across textures, meshes, and materials. Helps identify high-consumption assets, previews projected optimization gains, and exports persistent build reports.
 - **Automatic Legacy Migration:** Detects and seamlessly migrates cache files and settings from older optimizer iterations (`Assets/SynSceneOpti_v2` / `Assets/SynSceneOptimiser`) into the modern unified cache structure without breaking asset GUIDs or project references.
 
@@ -48,7 +49,7 @@ Comprehensive VRChat scene and world optimization suite for Unity. Features auto
 2. **Select & Configure Passes:**
    - In the **Optimizers** tab, enable or disable individual passes according to your world's needs.
    - Tune resolution caps (PC vs. Android/Quest), complexity thresholds, decimation targets, and particle clamping limits.
-   - Use the **General Fixes** tab to toggle scene-level utilities like reflection probe automation and material slot trimming.
+   - Use the **General Fixes** tab to toggle utilities like the **Bakery Auto Reflection Probe Baker** (and manual probe bakes) alongside material slot trimming.
 
 3. **Protect Specific Assets (Optional):**
    - Open **Window** → **Synthos** → **Protected Objects** (or use the drag-and-drop boxes in the optimizer window) to protect critical GameObjects, textures, or materials from being altered.
