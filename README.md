@@ -1,5 +1,8 @@
 # Synthos Scene Optimizer
 
+> [!WARNING]
+> **Experimental:** This tool is experimental. Always make sure to back up your Unity project and scenes before running optimizations just to be safe.
+
 Comprehensive VRChat scene and world optimization suite for Unity. Features automatic texture VRAM reduction, mesh decimation & compression, GPU instancing, audio & particle optimization, and mirror reflection mask tuning.
 
 ## Features
