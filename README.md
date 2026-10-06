@@ -2,21 +2,24 @@
 
 > [!WARNING]
 > **Experimental:** This tool is experimental. While it has been tested as thoroughly as possible, due to the nature of Unity and diverse scene configurations, some scenes might misbehave. Always make sure to **back up your project and scenes** before running optimizations just to be safe.
+>
+> **Note on Non-Destructive Design:** Most of the tool is **non-destructive**—heavy operations like texture downscaling, mesh simplification, and material optimization generate isolated assets inside a cache folder (`Assets/SynSceneOptimizer_Cache/`) rather than modifying your original project files. However, certain passes directly modify scene components or project asset import settings on disk (highlighted with ⚠️ below).
 
 Comprehensive VRChat scene and world optimization suite for Unity. Features automatic texture VRAM reduction, mesh decimation & compression, GPU instancing, audio & particle optimization, and mirror reflection mask tuning.
 
 ## Features
 
-- **Smart Texture VRAM Optimizer:** Analyzes texture entropy, visual detail, and screen footprint to reduce unnecessary VRAM usage without perceptible loss in quality.
-- **Mesh Simplifier:** High-performance mesh decimation powered by Meshia with configurable thresholds, scene triangle caps, preservation lists, and skip lists.
-- **Mesh VRAM Optimizer:** Reduces vertex data overhead and strips unnecessary vertex channels.
-- **Mesh Deduplicator:** Detects identical meshes and unifies them to save memory.
-- **GPU Instancing Enabler:** Automatically flags compatible materials for hardware GPU instancing.
-- **Audio Optimizer:** Audits AudioSources and clips for optimal compression, mono channels, and load types.
-- **Particle System Optimizer:** Caps max particle emissions and tunes prewarm settings.
-- **Mirror Layer Mask Optimizer:** Ensures VRChat mirrors don't redundantly draw heavy layers.
-- **VRAM Analyzer Window:** Live diagnostics tracking texture, mesh, and material memory footprint.
-- **Automatic Legacy Migration:** Seamlessly moves legacy cache and settings from earlier versions (`Assets/SynSceneOpti_v2` / `Assets/SynSceneOptimiser`) into modern project locations without breaking asset GUIDs.
+- **Smart Texture VRAM Optimizer** *(Non-Destructive)*: Analyzes texture entropy, visual detail, and screen footprint to reduce unnecessary VRAM usage without perceptible loss in quality. Generated downscaled textures are stored in an isolated cache (`Assets/SynSceneOptimizer_Cache/`); original texture assets are never overwritten.
+- **Mesh Simplifier** *(Non-Destructive)*: High-performance mesh decimation powered by Meshia with configurable thresholds, scene triangle caps, preservation lists, and skip lists. Generates simplified mesh copies in the cache without altering original model files.
+- **Mesh VRAM Optimizer** *(Non-Destructive)*: Reduces vertex data overhead, compacts UV3 channels, and strips unused vertex attributes into cached mesh copies.
+- **Mesh Deduplicator** *(Non-Destructive to Assets)*: Detects identical meshes and unifies scene renderer references to save memory; does not delete or alter original mesh asset files on disk.
+- **GPU Instancing Enabler** *(Non-Destructive)*: Automatically flags compatible materials for hardware GPU instancing via virtual staging and cached material duplicates.
+- **Audio Optimizer** *(⚠️ Destructive — Modifies Project Asset Importers)*: Audits AudioSources and clips for optimal compression, mono channels, and load types. **Directly modifies and re-imports AudioClip asset import settings on disk** (e.g., Vorbis, ADPCM, load type).
+- **Particle System Optimizer** *(⚠️ Destructive — Modifies Scene Components)*: Directly modifies `ParticleSystem` component properties (culling modes and max particle capacity clamps) on GameObjects within your scene.
+- **Mirror Layer Mask Optimizer** *(⚠️ Destructive — Modifies Scene Components)*: Directly modifies reflection layer culling masks on VRChat Mirror components in your scene.
+- **Structural Cleanup Passes** *(⚠️ Destructive — Modifies Scene Components)*: Optional passes (Material Slot Trimmer, Reflection & Light Probe Optimizers) that trim empty material slots on renderers and turn off probes on matte/baked objects in the scene.
+- **VRAM Analyzer Window** *(Read-Only)*: Live diagnostics tracking texture, mesh, and material memory footprint without modifying any assets or scenes.
+- **Automatic Legacy Migration**: Seamlessly moves legacy cache and settings from earlier versions (`Assets/SynSceneOpti_v2` / `Assets/SynSceneOptimiser`) into modern project locations without breaking asset GUIDs.
 
 ## Installation via VPM (VRChat Creator Companion)
 
