@@ -3,7 +3,7 @@
 > [!WARNING]
 > **Experimental:** This tool is experimental. While it has been tested as thoroughly as possible, due to the nature of Unity and diverse scene configurations, some scenes might misbehave. Always make sure to **back up your project and scenes** before running optimizations just to be safe.
 >
-> **Non-Destructive Design:** Most of the tool is completely **non-destructive**—textures, meshes, and materials are generated as separate copies inside an isolated cache (`Assets/SynSceneOptimizer_Cache/`), leaving your original project files untouched. The **only destructive feature is the Audio Clip Optimizer**, which modifies your audio file import settings directly on disk.
+> **Non-Destructive Design:** Most of the tool is completely **non-destructive**—textures, meshes, and materials are generated as separate copies inside an isolated cache (`Assets/SynSceneOptimizer_Cache/`), leaving your original project files untouched. Any features that make permanent changes to project assets are marked with a warning triangle (⚠️) in the feature list below.
 
 Comprehensive VRChat scene and world optimization suite for Unity. Features automatic texture VRAM reduction, mesh decimation & compression, GPU instancing, audio & particle optimization, and mirror reflection mask tuning.
 
@@ -14,7 +14,7 @@ Comprehensive VRChat scene and world optimization suite for Unity. Features auto
 - **Mesh VRAM Optimizer:** Reduces vertex data overhead and strips unnecessary vertex channels into cached mesh copies.
 - **Mesh Deduplicator:** Detects identical meshes and unifies them in the scene to save memory.
 - **GPU Instancing Enabler:** Automatically flags compatible materials for hardware GPU instancing.
-- **Audio Optimizer** *(⚠️ Destructive)*: Audits AudioSources and clips for optimal compression, mono channels, and load types. **Note: This is the only destructive feature**—it directly modifies and re-imports your project's AudioClip import settings on disk.
+- **Audio Optimizer** *(⚠️ Destructive)*: Audits AudioSources and clips for optimal compression, mono channels, and load types. Directly modifies and re-imports your project's AudioClip import settings on disk.
 - **Particle System Optimizer:** Caps max particle emissions and tunes prewarm settings.
 - **Mirror Layer Mask Optimizer:** Ensures VRChat mirrors don't redundantly draw heavy layers.
 - **VRAM Analyzer Window:** Live diagnostics tracking texture, mesh, and material memory footprint.
