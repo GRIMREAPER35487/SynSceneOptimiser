@@ -1,3 +1,9 @@
+<div align="center">
+  <img src="https://raw.githubusercontent.com/GRIMREAPER35487/SynSceneOptimiser/main/.github/banner.png" alt="Synthos Scene Optimizer" width="100%" />
+</div>
+
+<br/>
+
 # Synthos Scene Optimizer
 
 > [!WARNING]
