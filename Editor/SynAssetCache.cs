@@ -423,47 +423,12 @@ namespace Synthos.SynSceneOptimizer
             }
             else if (typeof(T) == typeof(Texture2D))
             {
-                extension = ".png";
+                extension = ".asset";
                 Texture2D tex = (Texture2D)(object)asset;
-                string fullPngPath = GetAssetPath(category, hashKey, cleanName, extension, plat);
-                byte[] pngData = tex.EncodeToPNG();
-                if (pngData != null && pngData.Length > 0)
+                if (cleanName.Contains("Palette") || category == PalettesCategory)
                 {
-                    File.WriteAllBytes(fullPngPath, pngData);
-                    AssetDatabase.ImportAsset(fullPngPath, ImportAssetOptions.ForceUpdate);
-
-                    TextureImporter importer = AssetImporter.GetAtPath(fullPngPath) as TextureImporter;
-                    if (importer != null)
-                    {
-                        if (cleanName.Contains("Palette") || category == PalettesCategory)
-                        {
-                            importer.textureCompression = TextureImporterCompression.Uncompressed;
-                            importer.filterMode = FilterMode.Point;
-                            importer.mipmapEnabled = false;
-                            importer.wrapMode = TextureWrapMode.Clamp;
-                            importer.alphaSource = TextureImporterAlphaSource.FromInput;
-                            importer.alphaIsTransparency = false;
-
-                            if (cleanName.Contains("Metallic"))
-                            {
-                                importer.sRGBTexture = false;
-                            }
-                            else
-                            {
-                                importer.sRGBTexture = true;
-                            }
-                        }
-                        else
-                        {
-                            importer.streamingMipmaps = true;
-                        }
-                        importer.SaveAndReimport();
-                    }
-
-                    T savedTex = AssetDatabase.LoadAssetAtPath<T>(fullPngPath);
-                    string texKey = $"{plat}_{category}_{hashKey}";
-                    MemoryCache[texKey] = savedTex != null ? savedTex : asset;
-                    return savedTex != null ? savedTex : asset;
+                    tex.filterMode = FilterMode.Point;
+                    tex.wrapMode = TextureWrapMode.Clamp;
                 }
             }
 
@@ -488,9 +453,9 @@ namespace Synthos.SynSceneOptimizer
                         MemoryCache[existingKey] = existingAsset;
                         return existingAsset;
                     }
-                    else if (typeof(T) == typeof(Mesh))
+                    else if (typeof(T) == typeof(Mesh) || typeof(T) == typeof(Texture2D))
                     {
-                        // Mesh native vertex buffers cannot be updated via CopySerialized. Re-create asset cleanly.
+                        // Mesh native vertex buffers and Texture2D native pixel buffers cannot be updated via CopySerialized. Re-create asset cleanly.
                         AssetDatabase.DeleteAsset(fullPath);
                     }
                     else

@@ -435,7 +435,7 @@ namespace Synthos.SynSceneOptimizer
             // Build Master Hash incorporating all sorted keys to guarantee cache freshness if any scene color shifts
             var masterHashTokens = new List<string>
             {
-                "MasterPalette_v7_srgb",
+                "MasterPalette_v8_asset",
                 QualitySettings.activeColorSpace.ToString(),
                 masterGridSize.ToString(),
                 allSceneUniqueKeys.Count.ToString(),
@@ -503,13 +503,7 @@ namespace Synthos.SynSceneOptimizer
                     int y = c / masterGridSize;
                     var k = allSceneUniqueKeys[c];
 
-                    // In Unity Linear color space, mat.GetColor() returns linear values.
-                    // But Texture2D.EncodeToPNG() saves raw byte values into PNG, and Unity's TextureImporter
-                    // imports PNGs as sRGB by default. At runtime, the GPU sampler applies an sRGB->Linear
-                    // conversion (pow 2.2). If we write linear values into the PNG, the conversion runs twice,
-                    // severely darkening and distorting colors (e.g. turning cream/peach into dark terracotta).
-                    // Converting to gamma before saving ensures the GPU sRGB->Linear decode reproduces the exact Linear color!
-                    Color albedoCol = QualitySettings.activeColorSpace == ColorSpace.Linear ? k.AlbedoColor.gamma : k.AlbedoColor;
+                    Color albedoCol = k.AlbedoColor;
                     albedoCol.r = Mathf.Clamp01(albedoCol.r);
                     albedoCol.g = Mathf.Clamp01(albedoCol.g);
                     albedoCol.b = Mathf.Clamp01(albedoCol.b);
@@ -522,7 +516,7 @@ namespace Synthos.SynSceneOptimizer
 
                     if (masterEmission != null)
                     {
-                        Color emCol = QualitySettings.activeColorSpace == ColorSpace.Linear ? k.EmissionColor.gamma : k.EmissionColor;
+                        Color emCol = k.EmissionColor;
                         emCol.r = Mathf.Clamp01(emCol.r);
                         emCol.g = Mathf.Clamp01(emCol.g);
                         emCol.b = Mathf.Clamp01(emCol.b);
@@ -585,8 +579,8 @@ namespace Synthos.SynSceneOptimizer
                 // A. Handle Static Renderers (Creates Material_{cleanName}_StaticPalette)
                 if (optimizeStatic && staticRenderers.Count > 0)
                 {
-                    string groupSubHash = SynAssetCache.ComputePaletteHash(group, (hasLayout ? layout.metallicProp : "None") + "_Static_v7", masterGridSize, masterGridSize);
-                    string staticPaletteHash = SynAssetCache.ComputeCompositeHash("PaletteMaterial_Static_v7", masterHash, groupSubHash);
+                    string groupSubHash = SynAssetCache.ComputePaletteHash(group, (hasLayout ? layout.metallicProp : "None") + "_Static_v8", masterGridSize, masterGridSize);
+                    string staticPaletteHash = SynAssetCache.ComputeCompositeHash("PaletteMaterial_Static_v8", masterHash, groupSubHash);
                     Material staticPaletteMat = null;
 
                     if (SynAssetCache.TryGetCachedAsset<Material>(SynAssetCache.MaterialsCategory, staticPaletteHash, out Material cachedStaticMat))
@@ -600,15 +594,15 @@ namespace Synthos.SynSceneOptimizer
                         staticPaletteMat = SynAssetCache.SaveCachedAsset(staticPaletteMat, SynAssetCache.MaterialsCategory, staticPaletteHash, $"Material_{cleanName}_StaticPalette");
                     }
 
-                    int optCount = ProcessRenderersForGroup(staticRenderers, group, staticPaletteMat, mappings, "PalMeshMaster_Static_v7", "_StaticPalettized", masterHash, optimizedMeshCache, verbose);
+                    int optCount = ProcessRenderersForGroup(staticRenderers, group, staticPaletteMat, mappings, "PalMeshMaster_Static_v8", "_StaticPalettized", masterHash, optimizedMeshCache, verbose);
                     totalObjectsOptimized += optCount;
                 }
 
                 // B. Handle Non-Static Renderers (Creates Material_{cleanName}_NonStaticPalette)
                 if (optimizeNonStatic && nonStaticRenderers.Count > 0)
                 {
-                    string groupSubHash = SynAssetCache.ComputePaletteHash(group, (hasLayout ? layout.metallicProp : "None") + "_NonStatic_v7", masterGridSize, masterGridSize);
-                    string nonStaticPaletteHash = SynAssetCache.ComputeCompositeHash("PaletteMaterial_NonStatic_v7", masterHash, groupSubHash);
+                    string groupSubHash = SynAssetCache.ComputePaletteHash(group, (hasLayout ? layout.metallicProp : "None") + "_NonStatic_v8", masterGridSize, masterGridSize);
+                    string nonStaticPaletteHash = SynAssetCache.ComputeCompositeHash("PaletteMaterial_NonStatic_v8", masterHash, groupSubHash);
                     Material nonStaticPaletteMat = null;
 
                     if (SynAssetCache.TryGetCachedAsset<Material>(SynAssetCache.MaterialsCategory, nonStaticPaletteHash, out Material cachedNonStaticMat))
@@ -622,7 +616,7 @@ namespace Synthos.SynSceneOptimizer
                         nonStaticPaletteMat = SynAssetCache.SaveCachedAsset(nonStaticPaletteMat, SynAssetCache.MaterialsCategory, nonStaticPaletteHash, $"Material_{cleanName}_NonStaticPalette");
                     }
 
-                    int optCount = ProcessRenderersForGroup(nonStaticRenderers, group, nonStaticPaletteMat, mappings, "PalMeshMaster_NonStatic_v7", "_NonStaticPalettized", masterHash, optimizedMeshCache, verbose);
+                    int optCount = ProcessRenderersForGroup(nonStaticRenderers, group, nonStaticPaletteMat, mappings, "PalMeshMaster_NonStatic_v8", "_NonStaticPalettized", masterHash, optimizedMeshCache, verbose);
                     totalObjectsOptimized += optCount;
                 }
 
