@@ -441,6 +441,17 @@ namespace Synthos.SynSceneOptimizer
                             importer.filterMode = FilterMode.Point;
                             importer.mipmapEnabled = false;
                             importer.wrapMode = TextureWrapMode.Clamp;
+                            importer.alphaSource = TextureImporterAlphaSource.FromInput;
+                            importer.alphaIsTransparency = false;
+
+                            if (cleanName.Contains("Metallic"))
+                            {
+                                importer.sRGBTexture = false;
+                            }
+                            else
+                            {
+                                importer.sRGBTexture = true;
+                            }
                         }
                         else
                         {
