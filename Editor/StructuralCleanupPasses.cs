@@ -204,21 +204,6 @@ namespace Synthos.SynSceneOptimizer
                     {
                         Debug.Log($"[SlotTrimmer] Trimmed {slotsRemoved} extra material slots from <b>{r.gameObject.name}</b>. Reason: {reason}");
                     }
-
-                    // Tag materials that were trimmed
-                    foreach (Material mat in trimmedMats)
-                    {
-                        if (mat == null) continue;
-                        SynVirtualMaterialState matState = SynPipelineCompactor.GetStagingState(mat);
-                        if (matState != null)
-                        {
-                            matState.IsDirty = true;
-                            if (!matState.AppliedPassTags.Contains("Trim"))
-                            {
-                                matState.AppliedPassTags.Add("Trim");
-                            }
-                        }
-                    }
                 }
             }
 

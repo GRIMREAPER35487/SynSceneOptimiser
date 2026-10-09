@@ -168,7 +168,7 @@ namespace Synthos.SynSceneOptimizer
         #region Hash Generation (Same-Name Safe & Platform-Isolated)
 
         /// <summary>
-        /// Gets the globally unique asset identifier (GUID + SubAsset FileID + DependencyHash).
+        /// Gets the globally unique asset identifier (GUID + SubAsset FileID + Type + Name + DependencyHash).
         /// </summary>
         public static string GetAssetIdentityHash(Object asset)
         {
@@ -177,24 +177,28 @@ namespace Synthos.SynSceneOptimizer
             string path = AssetDatabase.GetAssetPath(asset);
             if (string.IsNullOrEmpty(path))
             {
-                // In-memory or scene asset: fallback to instance signature
+                // In-memory asset: fallback to instance signature
                 return $"InMemory_{asset.GetType().Name}_{asset.name}_{asset.GetInstanceID()}";
             }
 
             string guid = AssetDatabase.AssetPathToGUID(path);
             string depHash = AssetDatabase.GetAssetDependencyHash(path).ToString();
+            string assetName = !string.IsNullOrEmpty(asset.name) ? asset.name : "Unnamed";
+            string typeName = asset.GetType().Name;
             
-            // If it's a sub-asset (e.g. mesh inside FBX), get its local identifier
+            // Query local file identifier (handles sub-assets, FBX components, scene objects, prefabs)
             long localId = 0;
-            if (AssetDatabase.IsSubAsset(asset))
+            if (AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string extractedGuid, out localId))
             {
-                if (AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out _, out localId))
+                string effectiveGuid = !string.IsNullOrEmpty(extractedGuid) ? extractedGuid : guid;
+                if (localId != 0)
                 {
-                    return $"{guid}_{localId}_{depHash}";
+                    return $"{effectiveGuid}_{localId}_{typeName}_{assetName}_{depHash}";
                 }
             }
 
-            return $"{guid}_{depHash}";
+            // Fallback for assets without distinct localId: always bind to asset name and type
+            return $"{guid}_{typeName}_{assetName}_{depHash}";
         }
 
         /// <summary>
@@ -237,7 +241,7 @@ namespace Synthos.SynSceneOptimizer
         {
             string plat = !string.IsNullOrEmpty(platform) ? platform : GetPlatformName();
             string assetId = GetAssetIdentityHash(mesh);
-            string geomSignature = $"{mesh.vertexCount}_{mesh.subMeshCount}_{mesh.triangles.Length}";
+            string geomSignature = $"{mesh.name}_{mesh.vertexCount}_{mesh.subMeshCount}_{mesh.triangles.Length}";
             return ComputeCompositeHashWithPlatform(plat, "MeshSimplifier", assetId, geomSignature, ratio.ToString("F4"), plat, vertexCount.ToString(), dynamicTiers.ToString(), extraParams);
         }
 
@@ -288,6 +292,11 @@ namespace Synthos.SynSceneOptimizer
         {
             string plat = platform ?? GetPlatformName();
             var tokens = new List<string> { "StagedMat", GetAssetIdentityHash(originalMat), passTag ?? "" };
+            if (originalMat != null)
+            {
+                tokens.Add($"matName:{originalMat.name}");
+                if (originalMat.shader != null) tokens.Add($"shader:{originalMat.shader.name}");
+            }
             if (floats != null)
             {
                 foreach (var kvp in floats) tokens.Add($"{kvp.Key}:{kvp.Value:F4}");
@@ -316,22 +325,62 @@ namespace Synthos.SynSceneOptimizer
         /// </summary>
         public static bool TryGetCachedAsset<T>(string category, string hashKey, out T cachedAsset, string platform = null) where T : Object
         {
+            return TryGetCachedAsset<T>(category, hashKey, null, out cachedAsset, platform);
+        }
+
+        /// <summary>
+        /// Attempts to find a cached asset by category, hash key, and optional cleanName for exact matching.
+        /// </summary>
+        public static bool TryGetCachedAsset<T>(string category, string hashKey, string cleanName, out T cachedAsset, string platform = null) where T : Object
+        {
             cachedAsset = null;
             if (string.IsNullOrEmpty(hashKey)) return false;
 
             string plat = platform ?? GetPlatformName();
 
             // 1. Check in-memory session cache
-            string memKey = $"{plat}_{category}_{hashKey}";
+            string memKey = !string.IsNullOrEmpty(cleanName) 
+                ? $"{plat}_{category}_{cleanName}_{hashKey}" 
+                : $"{plat}_{category}_{hashKey}";
             if (MemoryCache.TryGetValue(memKey, out Object memObj) && memObj != null && memObj is T typedMemObj)
             {
                 cachedAsset = typedMemObj;
                 return true;
             }
 
+            if (!string.IsNullOrEmpty(cleanName))
+            {
+                string genericMemKey = $"{plat}_{category}_{hashKey}";
+                if (MemoryCache.TryGetValue(genericMemKey, out Object genMemObj) && genMemObj != null && genMemObj is T typedGenMemObj)
+                {
+                    cachedAsset = typedGenMemObj;
+                    return true;
+                }
+            }
+
             // 2. Check on-disk cache directory
             string categoryDir = GetCategoryPath(category, plat);
             if (!Directory.Exists(categoryDir)) return false;
+
+            // Check specific cleanName file first if provided
+            if (!string.IsNullOrEmpty(cleanName))
+            {
+                string safeName = Regex.Replace(cleanName, @"[^a-zA-Z0-9_]", "_");
+                if (safeName.Length > 24) safeName = safeName.Substring(0, 24);
+                string[] exactFiles = Directory.GetFiles(categoryDir, $"{safeName}_{hashKey}.*");
+                foreach (string file in exactFiles)
+                {
+                    if (file.EndsWith(".meta")) continue;
+                    string unityPath = file.Replace('\\', '/');
+                    T asset = AssetDatabase.LoadAssetAtPath<T>(unityPath);
+                    if (asset != null)
+                    {
+                        MemoryCache[memKey] = asset;
+                        cachedAsset = asset;
+                        return true;
+                    }
+                }
+            }
 
             string[] files = Directory.GetFiles(categoryDir, $"*_{hashKey}.*");
             foreach (string file in files)
@@ -374,30 +423,75 @@ namespace Synthos.SynSceneOptimizer
             }
             else if (typeof(T) == typeof(Texture2D))
             {
-                extension = ".asset";
+                extension = ".png";
                 Texture2D tex = (Texture2D)(object)asset;
-                if (cleanName.Contains("Palette") || category == PalettesCategory)
+                string fullPngPath = GetAssetPath(category, hashKey, cleanName, extension, plat);
+                byte[] pngData = tex.EncodeToPNG();
+                if (pngData != null && pngData.Length > 0)
                 {
-                    tex.filterMode = FilterMode.Point;
-                    tex.wrapMode = TextureWrapMode.Clamp;
+                    File.WriteAllBytes(fullPngPath, pngData);
+                    AssetDatabase.ImportAsset(fullPngPath, ImportAssetOptions.ForceUpdate);
+
+                    TextureImporter importer = AssetImporter.GetAtPath(fullPngPath) as TextureImporter;
+                    if (importer != null)
+                    {
+                        if (cleanName.Contains("Palette") || category == PalettesCategory)
+                        {
+                            importer.textureCompression = TextureImporterCompression.Uncompressed;
+                            importer.filterMode = FilterMode.Point;
+                            importer.mipmapEnabled = false;
+                            importer.wrapMode = TextureWrapMode.Clamp;
+                        }
+                        else
+                        {
+                            importer.streamingMipmaps = true;
+                        }
+                        importer.SaveAndReimport();
+                    }
+
+                    T savedTex = AssetDatabase.LoadAssetAtPath<T>(fullPngPath);
+                    string texKey = $"{plat}_{category}_{hashKey}";
+                    MemoryCache[texKey] = savedTex != null ? savedTex : asset;
+                    return savedTex != null ? savedTex : asset;
                 }
             }
 
             string fullPath = GetAssetPath(category, hashKey, cleanName, extension, plat);
 
-            // If an asset already exists at this path, preserve its GUID and update serialized data
+            // If an asset already exists at this path, update it safely without corrupting serialized/native data
             if (File.Exists(fullPath))
             {
                 T existingAsset = AssetDatabase.LoadAssetAtPath<T>(fullPath);
                 if (existingAsset != null)
                 {
-                    EditorUtility.CopySerialized(asset, existingAsset);
-                    EditorUtility.SetDirty(existingAsset);
-                    AssetDatabase.SaveAssets();
+                    if (typeof(T) == typeof(Material))
+                    {
+                        Material existingMat = (Material)(object)existingAsset;
+                        Material sourceMat = (Material)(object)asset;
+                        existingMat.CopyPropertiesFromMaterial(sourceMat);
+                        existingMat.shaderKeywords = sourceMat.shaderKeywords;
+                        EditorUtility.SetDirty(existingMat);
+                        AssetDatabase.SaveAssets();
 
-                    string existingKey = $"{plat}_{category}_{hashKey}";
-                    MemoryCache[existingKey] = existingAsset;
-                    return existingAsset;
+                        string existingKey = $"{plat}_{category}_{hashKey}";
+                        MemoryCache[existingKey] = existingAsset;
+                        return existingAsset;
+                    }
+                    else if (typeof(T) == typeof(Mesh))
+                    {
+                        // Mesh native vertex buffers cannot be updated via CopySerialized. Re-create asset cleanly.
+                        AssetDatabase.DeleteAsset(fullPath);
+                    }
+                    else
+                    {
+                        EditorUtility.CopySerialized(asset, existingAsset);
+                        EditorUtility.SetDirty(existingAsset);
+                        AssetDatabase.SaveAssets();
+
+                        string existingKey = $"{plat}_{category}_{hashKey}";
+                        MemoryCache[existingKey] = existingAsset;
+                        return existingAsset;
+                    }
                 }
                 else
                 {
@@ -407,16 +501,6 @@ namespace Synthos.SynSceneOptimizer
 
             AssetDatabase.CreateAsset(asset, fullPath);
 
-            if (typeof(T) == typeof(Texture2D) && !cleanName.Contains("Palette") && category != PalettesCategory)
-            {
-                var so = new SerializedObject(asset);
-                var streamProp = so.FindProperty("m_StreamingMipmaps");
-                if (streamProp != null)
-                {
-                    streamProp.boolValue = true;
-                    so.ApplyModifiedPropertiesWithoutUndo();
-                }
-            }
             T savedAsset = AssetDatabase.LoadAssetAtPath<T>(fullPath);
 
             string key = $"{plat}_{category}_{hashKey}";
