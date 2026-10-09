@@ -434,12 +434,16 @@ namespace Synthos.SynSceneOptimizer
 
             string fullPath = GetAssetPath(category, hashKey, cleanName, extension, plat);
 
+            // Ensure asset is not marked DontSaveInEditor so Unity AssetBundle exporter packages it (matching VRCFury)
+            asset.hideFlags &= ~HideFlags.DontSaveInEditor;
+
             // If an asset already exists at this path, update it safely without corrupting serialized/native data
             if (File.Exists(fullPath))
             {
                 T existingAsset = AssetDatabase.LoadAssetAtPath<T>(fullPath);
                 if (existingAsset != null)
                 {
+                    existingAsset.hideFlags &= ~HideFlags.DontSaveInEditor;
                     if (typeof(T) == typeof(Material))
                     {
                         Material existingMat = (Material)(object)existingAsset;
@@ -447,7 +451,7 @@ namespace Synthos.SynSceneOptimizer
                         existingMat.CopyPropertiesFromMaterial(sourceMat);
                         existingMat.shaderKeywords = sourceMat.shaderKeywords;
                         EditorUtility.SetDirty(existingMat);
-                        AssetDatabase.SaveAssets();
+                        AssetDatabase.SaveAssetIfDirty(existingMat);
 
                         string existingKey = $"{plat}_{category}_{hashKey}";
                         MemoryCache[existingKey] = existingAsset;
@@ -462,7 +466,7 @@ namespace Synthos.SynSceneOptimizer
                     {
                         EditorUtility.CopySerialized(asset, existingAsset);
                         EditorUtility.SetDirty(existingAsset);
-                        AssetDatabase.SaveAssets();
+                        AssetDatabase.SaveAssetIfDirty(existingAsset);
 
                         string existingKey = $"{plat}_{category}_{hashKey}";
                         MemoryCache[existingKey] = existingAsset;
@@ -476,8 +480,16 @@ namespace Synthos.SynSceneOptimizer
             }
 
             AssetDatabase.CreateAsset(asset, fullPath);
+            EditorUtility.SetDirty(asset);
+            AssetDatabase.SaveAssetIfDirty(asset);
 
             T savedAsset = AssetDatabase.LoadAssetAtPath<T>(fullPath);
+            if (savedAsset != null)
+            {
+                savedAsset.hideFlags &= ~HideFlags.DontSaveInEditor;
+                EditorUtility.SetDirty(savedAsset);
+                AssetDatabase.SaveAssetIfDirty(savedAsset);
+            }
 
             string key = $"{plat}_{category}_{hashKey}";
             MemoryCache[key] = savedAsset != null ? savedAsset : asset;
