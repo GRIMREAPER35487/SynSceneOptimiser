@@ -435,7 +435,8 @@ namespace Synthos.SynSceneOptimizer
             // Build Master Hash incorporating all sorted keys to guarantee cache freshness if any scene color shifts
             var masterHashTokens = new List<string>
             {
-                "MasterPalette_v5_strict_em",
+                "MasterPalette_v7_srgb",
+                QualitySettings.activeColorSpace.ToString(),
                 masterGridSize.ToString(),
                 allSceneUniqueKeys.Count.ToString(),
                 anyGroupHasEmission.ToString(),
@@ -502,15 +503,31 @@ namespace Synthos.SynSceneOptimizer
                     int y = c / masterGridSize;
                     var k = allSceneUniqueKeys[c];
 
-                    masterAlbedo.SetPixel(x, y, debugColors ? Color.yellow : k.AlbedoColor);
+                    // In Unity Linear color space, mat.GetColor() returns linear values.
+                    // But Texture2D.EncodeToPNG() saves raw byte values into PNG, and Unity's TextureImporter
+                    // imports PNGs as sRGB by default. At runtime, the GPU sampler applies an sRGB->Linear
+                    // conversion (pow 2.2). If we write linear values into the PNG, the conversion runs twice,
+                    // severely darkening and distorting colors (e.g. turning cream/peach into dark terracotta).
+                    // Converting to gamma before saving ensures the GPU sRGB->Linear decode reproduces the exact Linear color!
+                    Color albedoCol = QualitySettings.activeColorSpace == ColorSpace.Linear ? k.AlbedoColor.gamma : k.AlbedoColor;
+                    albedoCol.r = Mathf.Clamp01(albedoCol.r);
+                    albedoCol.g = Mathf.Clamp01(albedoCol.g);
+                    albedoCol.b = Mathf.Clamp01(albedoCol.b);
+                    albedoCol.a = Mathf.Clamp01(k.AlbedoColor.a);
+                    masterAlbedo.SetPixel(x, y, debugColors ? Color.yellow : albedoCol);
 
-                    // Standard Unity PBR MetallicGloss: R = Metallic, A = Smoothness
-                    Color mgColor = new Color(k.Metallic, 0, 0, k.Smoothness);
+                    // Standard Unity PBR MetallicGloss: R = Metallic, A = Smoothness (raw linear data masks)
+                    Color mgColor = new Color(Mathf.Clamp01(k.Metallic), 0, 0, Mathf.Clamp01(k.Smoothness));
                     masterMetallic.SetPixel(x, y, mgColor);
 
                     if (masterEmission != null)
                     {
-                        masterEmission.SetPixel(x, y, k.EmissionColor);
+                        Color emCol = QualitySettings.activeColorSpace == ColorSpace.Linear ? k.EmissionColor.gamma : k.EmissionColor;
+                        emCol.r = Mathf.Clamp01(emCol.r);
+                        emCol.g = Mathf.Clamp01(emCol.g);
+                        emCol.b = Mathf.Clamp01(emCol.b);
+                        emCol.a = Mathf.Clamp01(k.EmissionColor.a);
+                        masterEmission.SetPixel(x, y, emCol);
                     }
                 }
 
@@ -568,8 +585,8 @@ namespace Synthos.SynSceneOptimizer
                 // A. Handle Static Renderers (Creates Material_{cleanName}_StaticPalette)
                 if (optimizeStatic && staticRenderers.Count > 0)
                 {
-                    string groupSubHash = SynAssetCache.ComputePaletteHash(group, (hasLayout ? layout.metallicProp : "None") + "_Static_v5", masterGridSize, masterGridSize);
-                    string staticPaletteHash = SynAssetCache.ComputeCompositeHash("PaletteMaterial_Static_v5", masterHash, groupSubHash);
+                    string groupSubHash = SynAssetCache.ComputePaletteHash(group, (hasLayout ? layout.metallicProp : "None") + "_Static_v7", masterGridSize, masterGridSize);
+                    string staticPaletteHash = SynAssetCache.ComputeCompositeHash("PaletteMaterial_Static_v7", masterHash, groupSubHash);
                     Material staticPaletteMat = null;
 
                     if (SynAssetCache.TryGetCachedAsset<Material>(SynAssetCache.MaterialsCategory, staticPaletteHash, out Material cachedStaticMat))
@@ -583,15 +600,15 @@ namespace Synthos.SynSceneOptimizer
                         staticPaletteMat = SynAssetCache.SaveCachedAsset(staticPaletteMat, SynAssetCache.MaterialsCategory, staticPaletteHash, $"Material_{cleanName}_StaticPalette");
                     }
 
-                    int optCount = ProcessRenderersForGroup(staticRenderers, group, staticPaletteMat, mappings, "PalMeshMaster_Static_v5_strict_em", "_StaticPalettized", masterHash, optimizedMeshCache, verbose);
+                    int optCount = ProcessRenderersForGroup(staticRenderers, group, staticPaletteMat, mappings, "PalMeshMaster_Static_v7", "_StaticPalettized", masterHash, optimizedMeshCache, verbose);
                     totalObjectsOptimized += optCount;
                 }
 
                 // B. Handle Non-Static Renderers (Creates Material_{cleanName}_NonStaticPalette)
                 if (optimizeNonStatic && nonStaticRenderers.Count > 0)
                 {
-                    string groupSubHash = SynAssetCache.ComputePaletteHash(group, (hasLayout ? layout.metallicProp : "None") + "_NonStatic_v5", masterGridSize, masterGridSize);
-                    string nonStaticPaletteHash = SynAssetCache.ComputeCompositeHash("PaletteMaterial_NonStatic_v5", masterHash, groupSubHash);
+                    string groupSubHash = SynAssetCache.ComputePaletteHash(group, (hasLayout ? layout.metallicProp : "None") + "_NonStatic_v7", masterGridSize, masterGridSize);
+                    string nonStaticPaletteHash = SynAssetCache.ComputeCompositeHash("PaletteMaterial_NonStatic_v7", masterHash, groupSubHash);
                     Material nonStaticPaletteMat = null;
 
                     if (SynAssetCache.TryGetCachedAsset<Material>(SynAssetCache.MaterialsCategory, nonStaticPaletteHash, out Material cachedNonStaticMat))
@@ -605,7 +622,7 @@ namespace Synthos.SynSceneOptimizer
                         nonStaticPaletteMat = SynAssetCache.SaveCachedAsset(nonStaticPaletteMat, SynAssetCache.MaterialsCategory, nonStaticPaletteHash, $"Material_{cleanName}_NonStaticPalette");
                     }
 
-                    int optCount = ProcessRenderersForGroup(nonStaticRenderers, group, nonStaticPaletteMat, mappings, "PalMeshMaster_NonStatic_v5_strict_em", "_NonStaticPalettized", masterHash, optimizedMeshCache, verbose);
+                    int optCount = ProcessRenderersForGroup(nonStaticRenderers, group, nonStaticPaletteMat, mappings, "PalMeshMaster_NonStatic_v7", "_NonStaticPalettized", masterHash, optimizedMeshCache, verbose);
                     totalObjectsOptimized += optCount;
                 }
 
@@ -623,22 +640,44 @@ namespace Synthos.SynSceneOptimizer
         private void ApplyPaletteTexturesToMaterial(Material paletteMat, Texture2D albedoTex, Texture2D metallicTex, Texture2D emissionTex, ShaderPropertyLayout layout, bool hasLayout)
         {
             if (paletteMat == null) return;
-            if (paletteMat.HasProperty("_MainTex") && paletteMat.GetTexture("_MainTex") != albedoTex) paletteMat.SetTexture("_MainTex", albedoTex);
-            if (paletteMat.HasProperty("_BaseMap") && paletteMat.GetTexture("_BaseMap") != albedoTex) paletteMat.SetTexture("_BaseMap", albedoTex);
+            if (paletteMat.HasProperty("_MainTex"))
+            {
+                if (paletteMat.GetTexture("_MainTex") != albedoTex) paletteMat.SetTexture("_MainTex", albedoTex);
+                paletteMat.SetTextureScale("_MainTex", Vector2.one);
+                paletteMat.SetTextureOffset("_MainTex", Vector2.zero);
+            }
+            if (paletteMat.HasProperty("_BaseMap"))
+            {
+                if (paletteMat.GetTexture("_BaseMap") != albedoTex) paletteMat.SetTexture("_BaseMap", albedoTex);
+                paletteMat.SetTextureScale("_BaseMap", Vector2.one);
+                paletteMat.SetTextureOffset("_BaseMap", Vector2.zero);
+            }
 
             if (hasLayout)
             {
                 if (metallicTex != null && !string.IsNullOrEmpty(layout.metallicGlossMapProp))
                 {
                     if (paletteMat.GetTexture(layout.metallicGlossMapProp) != metallicTex) paletteMat.SetTexture(layout.metallicGlossMapProp, metallicTex);
+                    if (paletteMat.HasProperty(layout.metallicGlossMapProp))
+                    {
+                        paletteMat.SetTextureScale(layout.metallicGlossMapProp, Vector2.one);
+                        paletteMat.SetTextureOffset(layout.metallicGlossMapProp, Vector2.zero);
+                    }
                     if (paletteMat.HasProperty(layout.metallicProp)) paletteMat.SetFloat(layout.metallicProp, 1.0f);
                     if (paletteMat.HasProperty(layout.smoothnessProp)) paletteMat.SetFloat(layout.smoothnessProp, 1.0f);
+                    if (paletteMat.HasProperty("_GlossMapScale")) paletteMat.SetFloat("_GlossMapScale", 1.0f);
+                    if (paletteMat.HasProperty("_SmoothnessTextureChannel")) paletteMat.SetFloat("_SmoothnessTextureChannel", 0.0f);
                     if (!string.IsNullOrEmpty(layout.metallicGlossKeyword)) paletteMat.EnableKeyword(layout.metallicGlossKeyword);
                 }
 
                 if (emissionTex != null && !string.IsNullOrEmpty(layout.emissionMapProp))
                 {
                     if (paletteMat.GetTexture(layout.emissionMapProp) != emissionTex) paletteMat.SetTexture(layout.emissionMapProp, emissionTex);
+                    if (paletteMat.HasProperty(layout.emissionMapProp))
+                    {
+                        paletteMat.SetTextureScale(layout.emissionMapProp, Vector2.one);
+                        paletteMat.SetTextureOffset(layout.emissionMapProp, Vector2.zero);
+                    }
                     if (paletteMat.HasProperty(layout.emissionProp)) paletteMat.SetColor(layout.emissionProp, Color.white);
                     if (paletteMat.HasProperty("_EmissionStrength")) paletteMat.SetFloat("_EmissionStrength", 1.0f);
                     if (!string.IsNullOrEmpty(layout.emissionKeyword)) paletteMat.EnableKeyword(layout.emissionKeyword);
@@ -773,7 +812,7 @@ namespace Synthos.SynSceneOptimizer
 
                     if (meshModified)
                     {
-                        clonedMesh.SetUVs(0, uvs);
+                        SetMeshUVsPreservingDimension(clonedMesh, 0, uvs);
                         clonedMesh = SynAssetCache.SaveCachedAsset(clonedMesh, SynAssetCache.MeshesCategory, palMeshHash, $"{originalMesh.name}{meshSuffix}");
                         targetMesh = clonedMesh;
                         optimizedMeshCache[cacheKey] = clonedMesh;
@@ -858,6 +897,12 @@ namespace Synthos.SynSceneOptimizer
                 return false;
             }
 
+            if (!mat.HasProperty("_MainTex") && !mat.HasProperty("_BaseMap"))
+            {
+                reason = "Shader does not support _MainTex or _BaseMap";
+                return false;
+            }
+
             int propertyCount = ShaderUtil.GetPropertyCount(shader);
             for (int i = 0; i < propertyCount; i++)
             {
@@ -873,6 +918,19 @@ namespace Synthos.SynSceneOptimizer
                             return false;
                         }
                     }
+                }
+            }
+
+            // Skip materials with HDR emission (> 1.0) to prevent clamping their glow in 8-bit palette textures
+            if (mat.HasProperty("_EmissionColor"))
+            {
+                Color em = mat.GetColor("_EmissionColor");
+                float emStrength = mat.HasProperty("_EmissionStrength") ? mat.GetFloat("_EmissionStrength") : 1.0f;
+                if ((em.r * emStrength > 1.001f || em.g * emStrength > 1.001f || em.b * emStrength > 1.001f) &&
+                    (mat.IsKeywordEnabled("_EMISSION") || mat.IsKeywordEnabled("_EMISSIVE") || mat.IsKeywordEnabled("_EMISSION_ON")))
+                {
+                    reason = "Material has HDR emission (> 1.0) which cannot be preserved in an 8-bit texture atlas";
+                    return false;
                 }
             }
 
