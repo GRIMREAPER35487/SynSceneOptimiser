@@ -14,7 +14,7 @@ namespace Synthos.SynSceneOptimizer
 {
     public class SynUploadHook : IProcessSceneWithReport
     {
-        public int callbackOrder => 0;
+        public int callbackOrder => -10000;
 
         public void OnProcessScene(Scene scene, BuildReport report)
         {
@@ -87,10 +87,8 @@ namespace Synthos.SynSceneOptimizer
             SynAutomaticOptimizerPipeline.RevertMipStreamingTextures();
 
             // Clean up session memory and query cache after build completes
-            SynAssetRegistry.FlushTransientCache();
+            SynAssetCache.ClearMemoryCache();
             SynSceneQuery.ClearCache();
-            EditorUtility.UnloadUnusedAssetsImmediate();
-            AssetDatabase.Refresh();
         }
     }
 
@@ -109,12 +107,8 @@ namespace Synthos.SynSceneOptimizer
                 // Revert temporary mipmap streaming settings
                 SynAutomaticOptimizerPipeline.RevertMipStreamingTextures();
 
-                if (!SynSceneOptimizerSettings.GetBool("DisableCacheFlushing", false))
-                {
-                    SynAssetRegistry.FlushTransientCache();
-                }
+                SynAssetCache.ClearMemoryCache();
                 SynSceneQuery.ClearCache();
-                AssetDatabase.Refresh();
             }
         }
     }
@@ -262,9 +256,6 @@ namespace Synthos.SynSceneOptimizer
                     // Commit final baked results and re-link references
                     SynPipelineCompactor.CommitStagingContext(scene);
                 }
-
-                // Clean up unreferenced temporary scratch objects from memory after all passes finish
-                EditorUtility.UnloadUnusedAssetsImmediate();
             }
             finally
             {
