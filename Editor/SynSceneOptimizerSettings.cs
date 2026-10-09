@@ -49,6 +49,7 @@ namespace Synthos.SynSceneOptimizer
         public static string GetSettingsSignature()
         {
             var sb = new System.Text.StringBuilder();
+            sb.Append("CacheVersion=2;");
 
             // Int keys
             string[] intKeys = new[]

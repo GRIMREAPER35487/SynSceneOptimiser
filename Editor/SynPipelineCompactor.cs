@@ -308,7 +308,7 @@ namespace Synthos.SynSceneOptimizer
                     string cleanName = Regex.Replace(state.OriginalMesh.name, @"[^a-zA-Z0-9_]", "");
                     string meshHashKey = SynAssetCache.ComputeCompositeHash("StagedMesh", SynAssetCache.GetAssetIdentityHash(state.OriginalMesh), suffix);
 
-                    if (SynAssetCache.TryGetCachedAsset<Mesh>(SynAssetCache.MeshesCategory, meshHashKey, out Mesh cachedMesh))
+                    if (SynAssetCache.TryGetCachedAsset<Mesh>(SynAssetCache.MeshesCategory, meshHashKey, cleanName, out Mesh cachedMesh))
                     {
                         bakedMeshes[state.OriginalMesh] = cachedMesh;
                     }
@@ -352,7 +352,7 @@ namespace Synthos.SynSceneOptimizer
                     string cleanName = Regex.Replace(state.OriginalMaterial.name, @"[^a-zA-Z0-9_]", "");
                     string matHashKey = SynAssetCache.ComputeMaterialHash(state.OriginalMaterial, suffix, state.TrackedFloats, state.TrackedVectors, state.TrackedTextures, state.TrackedKeywords);
 
-                    if (SynAssetCache.TryGetCachedAsset<Material>(SynAssetCache.MaterialsCategory, matHashKey, out Material cachedMat))
+                    if (SynAssetCache.TryGetCachedAsset<Material>(SynAssetCache.MaterialsCategory, matHashKey, cleanName, out Material cachedMat))
                     {
                         bakedMaterials[state.OriginalMaterial] = cachedMat;
                     }
@@ -395,27 +395,6 @@ namespace Synthos.SynSceneOptimizer
                         // Apply tracked keywords
                         newMat.shaderKeywords = new List<string>(state.TrackedKeywords).ToArray();
 
-                        // Clean ghost texture references from the serialized data
-                        var serializedNewMat = new SerializedObject(newMat);
-                        var texEnvs = serializedNewMat.FindProperty("m_SavedProperties.m_TexEnvs");
-                        if (texEnvs != null && texEnvs.isArray)
-                        {
-                            for (int i = texEnvs.arraySize - 1; i >= 0; i--)
-                            {
-                                var prop = texEnvs.GetArrayElementAtIndex(i);
-                                var nameProp = prop.FindPropertyRelative("first");
-                                if (nameProp != null)
-                                {
-                                    string texPropName = nameProp.stringValue;
-                                    if (state.TrackedTextures.ContainsKey(texPropName) && state.TrackedTextures[texPropName] == null)
-                                    {
-                                        texEnvs.DeleteArrayElementAtIndex(i);
-                                    }
-                                }
-                            }
-                            serializedNewMat.ApplyModifiedProperties();
-                        }
-
                         string fileName = string.Format("{0}_SynBaked{1}", cleanName, suffix);
                         Material savedMat = SynAssetCache.SaveCachedAsset(newMat, SynAssetCache.MaterialsCategory, matHashKey, fileName);
                         bakedMaterials[state.OriginalMaterial] = savedMat;
@@ -449,8 +428,11 @@ namespace Synthos.SynSceneOptimizer
 
                     if (sharedMats[i] != null && bakedMaterials.TryGetValue(sharedMats[i], out Material bakedMat))
                     {
-                        sharedMats[i] = bakedMat;
-                        matSwapped = true;
+                        if (bakedMat != null && bakedMat != sharedMats[i])
+                        {
+                            sharedMats[i] = bakedMat;
+                            matSwapped = true;
+                        }
                     }
                 }
                 if (matSwapped)
@@ -467,8 +449,11 @@ namespace Synthos.SynSceneOptimizer
                     {
                         if (bakedMeshes.TryGetValue(mf.sharedMesh, out Mesh bakedMesh))
                         {
-                            mf.sharedMesh = bakedMesh;
-                            EditorUtility.SetDirty(mf);
+                            if (bakedMesh != null && bakedMesh != mf.sharedMesh)
+                            {
+                                mf.sharedMesh = bakedMesh;
+                                EditorUtility.SetDirty(mf);
+                            }
                         }
                     }
                 }
@@ -479,8 +464,11 @@ namespace Synthos.SynSceneOptimizer
                     {
                         if (bakedMeshes.TryGetValue(smr.sharedMesh, out Mesh bakedMesh))
                         {
-                            smr.sharedMesh = bakedMesh;
-                            EditorUtility.SetDirty(smr);
+                            if (bakedMesh != null && bakedMesh != smr.sharedMesh)
+                            {
+                                smr.sharedMesh = bakedMesh;
+                                EditorUtility.SetDirty(smr);
+                            }
                         }
                     }
                 }
