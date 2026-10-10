@@ -4,6 +4,14 @@ All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versio
 
 ## [Unreleased]
 
+### Added
+- **Canvas Distance Culling:** hides world canvases when the local player is far away and shows them again on approach (Canvas component and UI collider only; scripts keep running; nothing synced). Set up from the UI Audit with "Add Distance Culling to Suggested Canvases" or per canvas, with an editable distance per canvas. Canvases switched by an animation or by a script holding the Canvas component are not suggested, and adding one shows a warning.
+- The UI Optimizer pass says when distance culling isn't set up yet, and how many canvases it manages once it is.
+- UI Audit "Hide at" column, and notes on whether a script holds the Canvas component itself or only its GameObject.
+
+### Changed
+- The package has a Runtime assembly again, holding the UdonSharp culling script.
+
 ### Fixed
 - UI Audit counted every graphic without "skip when transparent" as a transparent graphic being drawn. It now reports only graphics that are fully transparent right now, and lists the rest separately.
 - UI Audit offered fixes on video player canvases, which the UI Optimizer pass skips. They are now marked "video player, not changed".

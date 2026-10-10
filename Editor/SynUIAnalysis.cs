@@ -33,6 +33,15 @@ namespace Synthos.SynSceneOptimizer
         public List<string> Shaders = new List<string>();
         public bool IsAnimated;
         public bool IsScriptReferenced;
+        // A script or button event that holds the Canvas component itself could switch it on and off, which would
+        // fight distance culling (holding the GameObject is fine: SetActive doesn't conflict)
+        public bool IsCanvasComponentReferenced;
+
+        // Distance culling: metres at which this canvas is hidden, or negative if it isn't managed
+        public float CullDistance = -1f;
+
+        public bool CanDistanceCull => RenderMode == RenderMode.WorldSpace && !IsProtected;
+        public bool IsSuggestedForCulling => CanDistanceCull && IsActive && CullDistance < 0f && !IsAnimated && !IsCanvasComponentReferenced;
 
         // What the UI Optimizer pass would change on this canvas
         // Graphics that get "skip when transparent", and how many of those are fully transparent right now
@@ -66,10 +75,13 @@ namespace Synthos.SynSceneOptimizer
 
             var animatedCanvases = findRuntimeToggles ? CollectAnimatedCanvases(scene) : new HashSet<Canvas>();
             var scriptReferences = findRuntimeToggles ? CollectScriptReferences(scene) : new HashSet<Object>();
+            var culler = SynCanvasCullerSetup.FindCuller(scene);
 
             foreach (Canvas canvas in GetCanvases(scene))
             {
-                reports.Add(AnalyzeCanvas(canvas, animatedCanvases, scriptReferences));
+                var report = AnalyzeCanvas(canvas, animatedCanvases, scriptReferences);
+                report.CullDistance = SynCanvasCullerSetup.GetManagedDistance(culler, canvas);
+                reports.Add(report);
             }
 
             return reports.OrderByDescending(r => r.EstimatedDraws).ToList();
@@ -130,6 +142,7 @@ namespace Synthos.SynSceneOptimizer
                 RenderMode = canvas.renderMode,
                 IsAnimated = animatedCanvases.Contains(canvas),
                 IsScriptReferenced = scriptReferences.Contains(canvas) || scriptReferences.Contains(canvas.gameObject),
+                IsCanvasComponentReferenced = scriptReferences.Contains(canvas),
             };
 
             if (canvas.transform is RectTransform canvasRect)
@@ -432,8 +445,10 @@ namespace Synthos.SynSceneOptimizer
             {
                 foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
                 {
-                    // Buttons stay in: their click events can toggle canvases
+                    // Buttons stay in: their click events can toggle canvases. The distance culler's own references
+                    // (and its backing UdonBehaviour on the same object) are not a conflict.
                     if (behaviour == null || behaviour is Graphic) continue;
+                    if (behaviour.GetComponent<SynCanvasDistanceCuller>() != null) continue;
                     var iterator = new SerializedObject(behaviour).GetIterator();
                     while (iterator.Next(true))
                     {

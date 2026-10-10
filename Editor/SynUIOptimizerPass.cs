@@ -62,6 +62,19 @@ namespace Synthos.SynSceneOptimizer
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
             EditorGUILayout.HelpBox("The fixes below apply automatically when this pass is on. Open the UI Audit to see what each canvas costs and why.", MessageType.Info);
+
+            // Distance culling is a scene setup, not a build step, so say plainly when it isn't doing anything
+            var culler = SynCanvasCullerSetup.FindCuller(SceneManager.GetActiveScene());
+            int managed = culler != null && culler.canvases != null ? culler.canvases.Count(c => c != null) : 0;
+            if (managed == 0)
+            {
+                EditorGUILayout.HelpBox("Distance culling does nothing until you configure it. Open the UI Audit, choose canvases and click Add Distance Culling.", MessageType.Warning);
+            }
+            else
+            {
+                EditorGUILayout.HelpBox($"Distance culling: {managed} canvas(es) managed.", MessageType.None);
+            }
+
             if (GUILayout.Button(new GUIContent("Configure / Open UI Audit...", "Shows every canvas in the open scene with its estimated draw calls and what can be improved."), GUILayout.Height(22)))
             {
                 SynUIAuditWindow.ShowWindow();
