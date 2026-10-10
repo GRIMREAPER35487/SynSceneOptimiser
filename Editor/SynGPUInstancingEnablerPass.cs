@@ -108,7 +108,7 @@ namespace Synthos.SynSceneOptimizer
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
             int minInstances = SynSceneOptimizerSettings.GetInt("GPUInstancing_MinInstanceCount", 2);
-            int newMinInstances = EditorGUILayout.IntSlider(new GUIContent("Min Instance Count", "Only enable instancing if a material is shared by at least this many renderers in the scene."), minInstances, 1, 10);
+            int newMinInstances = EditorGUILayout.IntSlider(new GUIContent("Min Instance Count", "Only enable instancing on a material if at least this many renderers draw the same mesh with it."), minInstances, 1, 10);
             if (newMinInstances != minInstances)
             {
                 SynSceneOptimizerSettings.SetInt("GPUInstancing_MinInstanceCount", newMinInstances);
@@ -294,11 +294,16 @@ namespace Synthos.SynSceneOptimizer
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("<b><color=#00e676>[GPU Instancing Enabler] Scene Analysis Preview:</color></b>");
 
-            foreach (var kvp in usages.OrderByDescending(x => x.Value.Count))
+            // Same rule as the build: only renderers sharing both mesh and material can be instanced together
+            var instanceable = usages
+                .Select(kvp => new KeyValuePair<Material, int>(kvp.Key, GetInstanceableRenderers(kvp.Value, minInstances).Count))
+                .Where(kvp => kvp.Value > 0)
+                .OrderByDescending(kvp => kvp.Value);
+
+            foreach (var kvp in instanceable)
             {
                 Material mat = kvp.Key;
-                int count = kvp.Value.Count;
-                if (count < minInstances) continue;
+                int count = kvp.Value;
 
                 string status = mat.enableInstancing ? "<color=#888888>(Already Enabled)</color>" : "<color=#00e676>(ELIGIBLE)</color>";
                 if (!mat.enableInstancing)
@@ -340,18 +345,19 @@ namespace Synthos.SynSceneOptimizer
             foreach (var kvp in usages)
             {
                 Material mat = kvp.Key;
-                if (kvp.Value.Count < minInstances) continue;
                 if (mat.enableInstancing) continue;
+                int count = GetInstanceableRenderers(kvp.Value, minInstances).Count;
+                if (count == 0) continue;
 
                 toModify.Add(mat);
-                totalRenderersAffected += kvp.Value.Count;
+                totalRenderersAffected += count;
             }
 
             if (toModify.Count == 0)
             {
                 EditorUtility.DisplayDialog(
                     "GPU Instancing Enabler",
-                    $"All eligible materials ({usages.Count} scanned) already have GPU Instancing enabled!",
+                    $"No materials need GPU Instancing ({usages.Count} scanned). They are either already instanced or not shared by enough renderers with the same mesh.",
                     "OK"
                 );
                 return;

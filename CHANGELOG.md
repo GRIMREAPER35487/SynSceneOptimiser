@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [Unreleased]
+
+### Fixed
+- GPU Instancing Enabler's "Preview Eligible Materials" and "Apply to Material Assets on Disk" buttons now use the same rule as the build (renderers sharing both mesh and material), so they no longer list or change materials the build would skip.
+
 ## [1.1.0-beta.5] - 2026-10-10
 
 ### Changed
