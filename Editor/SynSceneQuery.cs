@@ -112,38 +112,44 @@ namespace Synthos.SynSceneOptimizer
 
         public static GameObject FindGameObjectByPath(string path)
         {
-            if (string.IsNullOrEmpty(path)) return null;
-            string[] parts = path.Split('/');
-            if (parts.Length == 0) return null;
-
             for (int s = 0; s < SceneManager.sceneCount; s++)
             {
                 var scene = SceneManager.GetSceneAt(s);
                 if (!scene.isLoaded) continue;
-                foreach (var root in scene.GetRootGameObjects())
+                GameObject found = FindGameObjectByPath(scene, path);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Finds a GameObject by "Root/Child/Grandchild" path inside one scene (active and inactive objects).
+        /// </summary>
+        public static GameObject FindGameObjectByPath(Scene scene, string path)
+        {
+            if (string.IsNullOrEmpty(path) || !scene.IsValid() || !scene.isLoaded) return null;
+            string[] parts = path.Split('/');
+
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                if (root == null || root.name != parts[0]) continue;
+
+                Transform cur = root.transform;
+                for (int i = 1; i < parts.Length && cur != null; i++)
                 {
-                    if (root != null && root.name == parts[0])
+                    Transform child = null;
+                    for (int c = 0; c < cur.childCount; c++)
                     {
-                        Transform cur = root.transform;
-                        bool match = true;
-                        for (int i = 1; i < parts.Length; i++)
+                        var ch = cur.GetChild(c);
+                        if (ch != null && ch.name == parts[i])
                         {
-                            Transform child = null;
-                            for (int c = 0; c < cur.childCount; c++)
-                            {
-                                var ch = cur.GetChild(c);
-                                if (ch != null && ch.name == parts[i])
-                                {
-                                    child = ch;
-                                    break;
-                                }
-                            }
-                            if (child == null) { match = false; break; }
-                            cur = child;
+                            child = ch;
+                            break;
                         }
-                        if (match && cur != null) return cur.gameObject;
                     }
+                    cur = child;
                 }
+                if (cur != null) return cur.gameObject;
             }
             return null;
         }

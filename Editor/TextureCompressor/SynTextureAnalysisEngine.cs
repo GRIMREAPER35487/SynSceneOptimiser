@@ -36,7 +36,11 @@ namespace Synthos.SynSceneOptimizer.TextureCompressor
 
         public static bool IsTransparent(float val) => val < 0f;
 
-        public static ProcessedPixelData Extract(Color32[] pixels, int width, int height)
+        /// <param name="alphaIsTransparency">
+        /// Only true when alpha is the texture's coverage (main texture of a cutout/transparent material).
+        /// Otherwise alpha holds data such as smoothness or DXT5nm normal X and every texel must be analyzed.
+        /// </param>
+        public static ProcessedPixelData Extract(Color32[] pixels, int width, int height, bool alphaIsTransparency)
         {
             int total = width * height;
             float[] grayscale = new float[total];
@@ -50,7 +54,7 @@ namespace Synthos.SynSceneOptimizer.TextureCompressor
                 float a = c.a / 255f;
                 if (a < 0.99f) hasAlpha = true;
 
-                if (a < AnalysisConstants.AlphaThreshold)
+                if (alphaIsTransparency && a < AnalysisConstants.AlphaThreshold)
                 {
                     grayscale[i] = TransparentMarker;
                 }
@@ -266,11 +270,11 @@ namespace Synthos.SynSceneOptimizer.TextureCompressor
 
     public static class SynTextureAnalysisEngine
     {
-        public static float AnalyzeComplexity(Color32[] pixels, int width, int height, bool isNormalMap)
+        public static float AnalyzeComplexity(Color32[] pixels, int width, int height, bool isNormalMap, bool alphaIsTransparency = false)
         {
             if (pixels == null || pixels.Length == 0 || width <= 0 || height <= 0) return 0f;
 
-            var data = AlphaExtractor.Extract(pixels, width, height);
+            var data = AlphaExtractor.Extract(pixels, width, height, alphaIsTransparency && !isNormalMap);
             if (data.OpaqueCount == 0) return 0f;
 
             float gradient = ImageMath.CalculateSobelGradient(data.Grayscale, data.Width, data.Height, data.OpaqueCount);

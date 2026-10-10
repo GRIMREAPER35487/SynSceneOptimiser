@@ -236,7 +236,8 @@ namespace Synthos.SynSceneOptimizer
                 if (SynSceneQuery.IsVideoComponentDetected(r)) continue;
 
                 // Check if renderer is static and has baked lightmaps
-                if (r.gameObject.isStatic && r.lightmapIndex >= 0)
+                // 0xFFFE = static with Scale In Lightmap 0: lit by probes, not a lightmap, so probes must stay on
+                if (r.gameObject.isStatic && r.lightmapIndex >= 0 && r.lightmapIndex < 0xFFFE)
                 {
                     if (r.lightProbeUsage != LightProbeUsage.Off)
                     {
@@ -297,9 +298,12 @@ namespace Synthos.SynSceneOptimizer
                             if (nameProp != null)
                             {
                                 string texPropName = nameProp.stringValue;
-                                if (matState.TargetShader != null && !HasPropertyOnShader(matState.TargetShader, texPropName))
+                                // Only slots that still hold a texture cost anything; empty ghost slots are left alone
+                                SerializedProperty texProp = prop.FindPropertyRelative("second.m_Texture");
+                                bool holdsTexture = texProp != null && texProp.objectReferenceValue != null;
+                                if (holdsTexture && matState.TargetShader != null && !HasPropertyOnShader(matState.TargetShader, texPropName))
                                 {
-                                    matState.TrackedTextures[texPropName] = null;
+                                    matState.PurgedTextureProperties.Add(texPropName);
                                     matState.IsDirty = true;
                                     clearedAny = true;
                                     purgedCount++;

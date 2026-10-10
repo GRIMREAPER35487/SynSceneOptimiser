@@ -78,6 +78,47 @@ namespace Synthos.SynSceneOptimizer
         // In-memory lookup cache to avoid repeated disk queries during a single session
         private static readonly Dictionary<string, Object> MemoryCache = new Dictionary<string, Object>();
 
+        // Cache files used this session that bypass MemoryCache (e.g. importer-backed texture copies)
+        private static readonly HashSet<string> ExtraUsedPaths = new HashSet<string>();
+
+        public static void RecordUsage(string assetPath)
+        {
+            if (!string.IsNullOrEmpty(assetPath)) ExtraUsedPaths.Add(assetPath);
+        }
+
+        /// <summary>
+        /// Paths of every cache asset read or written this session (feeds SynCacheJanitor).
+        /// </summary>
+        public static List<string> GetSessionAssetPaths()
+        {
+            var paths = new HashSet<string>(ExtraUsedPaths);
+            foreach (Object asset in MemoryCache.Values)
+            {
+                if (asset == null) continue;
+                string path = AssetDatabase.GetAssetPath(asset);
+                if (!string.IsNullOrEmpty(path)) paths.Add(path);
+            }
+            return new List<string>(paths);
+        }
+
+        /// <summary>
+        /// Saves only cache assets the optimizer modified. Unlike AssetDatabase.SaveAssets this never writes
+        /// unrelated unsaved edits in the user's project to disk in the middle of a build.
+        /// </summary>
+        public static void SaveDirtyCacheAssets()
+        {
+            string cacheRoot = BaseCachePath;
+            foreach (Object asset in MemoryCache.Values)
+            {
+                if (asset == null || !EditorUtility.IsDirty(asset)) continue;
+                string path = AssetDatabase.GetAssetPath(asset);
+                if (!string.IsNullOrEmpty(path) && path.StartsWith(cacheRoot))
+                {
+                    AssetDatabase.SaveAssetIfDirty(asset);
+                }
+            }
+        }
+
         #region Platform Resolution
 
         public static SynTargetPlatform GetCurrentTargetPlatform()
@@ -288,10 +329,10 @@ namespace Synthos.SynSceneOptimizer
         /// <summary>
         /// Computes deterministic hash for a Staged Virtual Material.
         /// </summary>
-        public static string ComputeMaterialHash(Material originalMat, string passTag, IDictionary<string, float> floats, IDictionary<string, Vector4> vectors, IDictionary<string, Texture> textures, IEnumerable<string> keywords, string platform = null)
+        public static string ComputeMaterialHash(Material originalMat, string passTag, IDictionary<string, float> floats, IDictionary<string, Vector4> vectors, IDictionary<string, Texture> textures, IEnumerable<string> keywords, string platform = null, string extraParams = null)
         {
             string plat = platform ?? GetPlatformName();
-            var tokens = new List<string> { "StagedMat", GetAssetIdentityHash(originalMat), passTag ?? "" };
+            var tokens = new List<string> { "StagedMat", GetAssetIdentityHash(originalMat), passTag ?? "", extraParams ?? "" };
             if (originalMat != null)
             {
                 tokens.Add($"matName:{originalMat.name}");
@@ -303,7 +344,7 @@ namespace Synthos.SynSceneOptimizer
             }
             if (vectors != null)
             {
-                foreach (var kvp in vectors) tokens.Add($"{kvp.Key}:{kvp.Value}");
+                foreach (var kvp in vectors) tokens.Add($"{kvp.Key}:{kvp.Value.x:R},{kvp.Value.y:R},{kvp.Value.z:R},{kvp.Value.w:R}");
             }
             if (textures != null)
             {
@@ -504,6 +545,7 @@ namespace Synthos.SynSceneOptimizer
         public static void ClearMemoryCache()
         {
             MemoryCache.Clear();
+            ExtraUsedPaths.Clear();
         }
 
         public static void GetCacheStats(out int totalFiles, out long totalBytes, string platform = null)
@@ -597,6 +639,31 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
+        /// <summary>
+        /// Temporarily ends the active StartAssetEditing batch so assets created inside the pipeline
+        /// can be imported synchronously and loaded. The batch resumes when the returned scope is disposed.
+        /// </summary>
+        public static IDisposable Suspend()
+        {
+            return new SuspendScope();
+        }
+
+        private sealed class SuspendScope : IDisposable
+        {
+            private readonly bool wasActive;
+
+            public SuspendScope()
+            {
+                wasActive = isScopeActive;
+                if (wasActive) AssetDatabase.StopAssetEditing();
+            }
+
+            public void Dispose()
+            {
+                if (wasActive) AssetDatabase.StartAssetEditing();
+            }
+        }
+
         public void Dispose()
         {
             if (isRootScope && isScopeActive)
@@ -608,7 +675,7 @@ namespace Synthos.SynSceneOptimizer
                 finally
                 {
                     isScopeActive = false;
-                    AssetDatabase.SaveAssets();
+                    SynAssetCache.SaveDirtyCacheAssets();
                 }
             }
         }

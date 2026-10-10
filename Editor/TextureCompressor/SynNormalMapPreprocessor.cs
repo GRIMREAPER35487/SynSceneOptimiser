@@ -40,13 +40,20 @@ namespace Synthos.SynSceneOptimizer.TextureCompressor
             }
         }
 
+        /// <summary>
+        /// Re-normalizes resampled tangent-space normals and writes them back in plain RGB layout
+        /// (X in R, Y in G, reconstructed Z in B, A = 1). DXT5nm sources (X in A, R ≈ 1) are decoded first.
+        /// The RGB output unpacks correctly with Unity's UnpackNormal for BC5, ASTC and uncompressed formats.
+        /// </summary>
         public static void ReNormalize(Color32[] pixels)
         {
-            if (pixels == null) return;
+            if (pixels == null || pixels.Length == 0) return;
+
+            bool agLayout = IsAGLayout(pixels);
             for (int i = 0; i < pixels.Length; i++)
             {
                 Color32 c = pixels[i];
-                float nx = (c.r / 255f) * 2f - 1f;
+                float nx = ((agLayout ? c.a : c.r) / 255f) * 2f - 1f;
                 float ny = (c.g / 255f) * 2f - 1f;
                 float lenSq = nx * nx + ny * ny;
                 if (lenSq > 1f)
@@ -54,14 +61,30 @@ namespace Synthos.SynSceneOptimizer.TextureCompressor
                     float invLen = 1f / Mathf.Sqrt(lenSq);
                     nx *= invLen;
                     ny *= invLen;
-                    pixels[i] = new Color32(
-                        (byte)Mathf.Clamp(Mathf.RoundToInt((nx * 0.5f + 0.5f) * 255f), 0, 255),
-                        (byte)Mathf.Clamp(Mathf.RoundToInt((ny * 0.5f + 0.5f) * 255f), 0, 255),
-                        255,
-                        c.a
-                    );
+                    lenSq = 1f;
                 }
+                float nz = Mathf.Sqrt(Mathf.Max(0f, 1f - lenSq));
+
+                pixels[i] = new Color32(EncodeUnit(nx), EncodeUnit(ny), EncodeUnit(nz), 255);
             }
+        }
+
+        // DXT5nm stores X in alpha and leaves red saturated; RGB normals keep red centred around 0.5
+        private static bool IsAGLayout(Color32[] pixels)
+        {
+            int saturatedRed = 0;
+            bool alphaVaries = false;
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                if (pixels[i].r >= 250) saturatedRed++;
+                if (pixels[i].a < 250) alphaVaries = true;
+            }
+            return alphaVaries && saturatedRed >= pixels.Length * 0.95f;
+        }
+
+        private static byte EncodeUnit(float v)
+        {
+            return (byte)Mathf.Clamp(Mathf.RoundToInt((v * 0.5f + 0.5f) * 255f), 0, 255);
         }
     }
 }

@@ -33,3 +33,7 @@ Desktop.ini
 build/
 Cache/
 TransientCache/
+
+# User protection settings live in the consuming project, never in the package
+SynProtectionSettings.asset
+SynProtectionSettings.asset.meta

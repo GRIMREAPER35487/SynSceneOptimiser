@@ -59,12 +59,15 @@ namespace Synthos.SynSceneOptimizer
                 Mesh originalMesh = kvp.Key;
                 List<Renderer> affectedRenderers = kvp.Value;
 
+                // Only compact UV3 when it is stored with 3-4 components but z/w carry no data, so
+                // shaders reading uv3.zw (slice indices, custom data) never lose information
                 bool needsCompactUV3 = false;
-                if (compactUV3 && originalMesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.TexCoord3))
+                if (compactUV3 && originalMesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.TexCoord3)
+                    && originalMesh.GetVertexAttributeDimension(UnityEngine.Rendering.VertexAttribute.TexCoord3) > 2)
                 {
                     var testUvs = new List<Vector4>();
                     originalMesh.GetUVs(3, testUvs);
-                    if (testUvs.Count > 0) needsCompactUV3 = true;
+                    needsCompactUV3 = testUvs.Count > 0 && AreZWComponentsZero(testUvs);
                 }
 
                 bool needsStripTangents = stripUnused && originalMesh.tangents != null && originalMesh.tangents.Length > 0 && IsAllZero(originalMesh.tangents);
@@ -76,7 +79,7 @@ namespace Synthos.SynSceneOptimizer
                 }
 
                 string meshHash = SynAssetCache.ComputeCompositeHash(
-                    "MeshMemoryOpt_v2",
+                    "MeshMemoryOpt_v3",
                     SynAssetCache.GetAssetIdentityHash(originalMesh),
                     needsCompactUV3.ToString(),
                     needsStripTangents.ToString(),
@@ -166,12 +169,14 @@ namespace Synthos.SynSceneOptimizer
                 MeshFilter mf = mr.GetComponent<MeshFilter>();
                 if (mf != null)
                 {
+                    SynPipelineCompactor.RecordMeshReplacement(r, mf.sharedMesh);
                     mf.sharedMesh = mesh;
                     EditorUtility.SetDirty(mf);
                 }
             }
             else if (r is SkinnedMeshRenderer smr)
             {
+                SynPipelineCompactor.RecordMeshReplacement(r, smr.sharedMesh);
                 smr.sharedMesh = mesh;
                 EditorUtility.SetDirty(smr);
             }
@@ -186,15 +191,23 @@ namespace Synthos.SynSceneOptimizer
             return true;
         }
 
+        private bool AreZWComponentsZero(List<Vector4> uvs)
+        {
+            for (int i = 0; i < uvs.Count; i++)
+            {
+                if (uvs[i].z != 0f || uvs[i].w != 0f) return false;
+            }
+            return true;
+        }
+
         private bool IsAllDefaultColor(Color[] colors)
         {
             if (colors == null || colors.Length == 0) return true;
-            Color first = colors[0];
-            // Only pure white (1,1,1,1) or pure black/clear (0,0,0,1 / 0,0,0,0) could be considered unpainted default
-            if (first != Color.white && first != Color.black && first != Color.clear) return false;
-            for (int i = 1; i < colors.Length; i++)
+            // Only uniform white matches what shaders read when the channel is absent. Uniform black or
+            // clear is often an intentional mask (emission/AO/wind) and must be kept.
+            for (int i = 0; i < colors.Length; i++)
             {
-                if (colors[i] != first) return false;
+                if (colors[i] != Color.white) return false;
             }
             return true;
         }

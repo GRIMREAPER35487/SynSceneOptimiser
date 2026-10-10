@@ -31,7 +31,7 @@ namespace Synthos.SynSceneOptimizer
             }
 
             bool stripEmptyRenderers = SynSceneOptimizerSettings.GetBool("EditorOnlyPruner_StripEmptyRenderers", true);
-            bool newStripEmpty = EditorGUILayout.Toggle(new GUIContent("Strip Empty/Broken Renderers", "Removes MeshRenderers with missing meshes or empty material arrays to prevent build asset leaks."), stripEmptyRenderers);
+            bool newStripEmpty = EditorGUILayout.Toggle(new GUIContent("Strip Empty/Broken Renderers", "Removes renderers that have materials but no mesh (or a mesh but no materials) to prevent build asset leaks. Renderers that a script, animator or Udon behaviour could fill at runtime are always kept."), stripEmptyRenderers);
             if (newStripEmpty != stripEmptyRenderers)
             {
                 SynSceneOptimizerSettings.SetBool("EditorOnlyPruner_StripEmptyRenderers", newStripEmpty);
@@ -94,6 +94,7 @@ namespace Synthos.SynSceneOptimizer
             // 2. Strip structurally broken or empty renderers that leak memory
             if (stripEmptyRenderers)
             {
+                HashSet<UnityEngine.Object> sceneReferences = null; // built lazily, only if a candidate is found
                 for (int i = renderers.Count - 1; i >= 0; i--)
                 {
                     var r = renderers[i];
@@ -132,7 +133,19 @@ namespace Synthos.SynSceneOptimizer
                         }
                     }
 
-                    if (!hasValidMat || !hasValidMesh)
+                    // Only a half-empty renderer leaks anything: materials without a mesh, or a mesh without materials.
+                    // A renderer with neither references no assets, so removing it gains nothing.
+                    bool leaksAssets = hasValidMat != hasValidMesh;
+                    if (leaksAssets && !IsSafeToStrip(r, scene, ref sceneReferences))
+                    {
+                        if (verbose)
+                        {
+                            Debug.Log($"[SynEditorOnlyPrunerPass] Kept empty renderer on '{r.gameObject.name}': it may be filled at runtime (script, animator or scene reference).");
+                        }
+                        continue;
+                    }
+
+                    if (leaksAssets)
                     {
                         strippedRendererCount++;
                         if (verbose)
@@ -163,6 +176,50 @@ namespace Synthos.SynSceneOptimizer
                 "EditorOnly Pruner",
                 string.Format("Pruned {0} EditorOnly GameObjects and {1} empty renderers from build scene.", prunedObjectCount, strippedRendererCount)
             );
+        }
+
+        /// <summary>
+        /// Renderers left empty in the editor are often filled at runtime: TextMeshPro builds its mesh, Udon/UdonSharp
+        /// assign meshes or materials, animators swap materials. Destroying such a renderer breaks those scripts, so
+        /// it is only removed when nothing could be driving it.
+        /// </summary>
+        private static bool IsSafeToStrip(Renderer r, Scene scene, ref HashSet<UnityEngine.Object> sceneReferences)
+        {
+            foreach (var behaviour in r.GetComponents<MonoBehaviour>())
+            {
+                if (behaviour != null) return false;
+            }
+
+            if (r.GetComponentInParent<Animator>(true) != null) return false;
+
+            if (sceneReferences == null) sceneReferences = CollectScriptReferences(scene);
+            return !sceneReferences.Contains(r)
+                && !sceneReferences.Contains(r.gameObject)
+                && !sceneReferences.Contains(r.transform)
+                && !(r.GetComponent<MeshFilter>() is MeshFilter mf && sceneReferences.Contains(mf));
+        }
+
+        // Every object referenced by a serialized field of any script in the scene (covers UdonBehaviour public
+        // variables and UdonSharp proxy fields, which are both serialized object references)
+        private static HashSet<UnityEngine.Object> CollectScriptReferences(Scene scene)
+        {
+            var references = new HashSet<UnityEngine.Object>();
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                foreach (var behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if (behaviour == null) continue;
+                    var iterator = new SerializedObject(behaviour).GetIterator();
+                    while (iterator.Next(true))
+                    {
+                        if (iterator.propertyType == SerializedPropertyType.ObjectReference && iterator.objectReferenceValue != null)
+                        {
+                            references.Add(iterator.objectReferenceValue);
+                        }
+                    }
+                }
+            }
+            return references;
         }
 
         private void FindEditorOnlyObjectsRecursive(Transform current, List<GameObject> results)

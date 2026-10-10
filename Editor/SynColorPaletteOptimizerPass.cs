@@ -481,7 +481,8 @@ namespace Synthos.SynSceneOptimizer
                 for (int p = 0; p < clearWhite.Length; p++) clearWhite[p] = new Color32(255, 255, 255, 255);
                 masterAlbedo.SetPixels32(clearWhite);
 
-                Texture2D masterMetallic = new Texture2D(masterGridSize, masterGridSize, TextureFormat.RGBA32, false);
+                // Metallic/smoothness are data, not color: linear so 0.5 samples as 0.5 in a Linear-space project
+                Texture2D masterMetallic = new Texture2D(masterGridSize, masterGridSize, TextureFormat.RGBA32, false, true);
                 masterMetallic.filterMode = FilterMode.Point;
                 masterMetallic.wrapMode = TextureWrapMode.Clamp;
                 Color32[] clearBlack = new Color32[masterGridSize * masterGridSize];
@@ -594,6 +595,7 @@ namespace Synthos.SynSceneOptimizer
                         staticPaletteMat = SynAssetCache.SaveCachedAsset(staticPaletteMat, SynAssetCache.MaterialsCategory, staticPaletteHash, $"Material_{cleanName}_StaticPalette");
                     }
 
+                    SynPipelineCompactor.RegisterGeneratedAsset(staticPaletteMat);
                     int optCount = ProcessRenderersForGroup(staticRenderers, group, staticPaletteMat, mappings, "PalMeshMaster_Static_v8", "_StaticPalettized", masterHash, optimizedMeshCache, verbose);
                     totalObjectsOptimized += optCount;
                 }
@@ -616,6 +618,7 @@ namespace Synthos.SynSceneOptimizer
                         nonStaticPaletteMat = SynAssetCache.SaveCachedAsset(nonStaticPaletteMat, SynAssetCache.MaterialsCategory, nonStaticPaletteHash, $"Material_{cleanName}_NonStaticPalette");
                     }
 
+                    SynPipelineCompactor.RegisterGeneratedAsset(nonStaticPaletteMat);
                     int optCount = ProcessRenderersForGroup(nonStaticRenderers, group, nonStaticPaletteMat, mappings, "PalMeshMaster_NonStatic_v8", "_NonStaticPalettized", masterHash, optimizedMeshCache, verbose);
                     totalObjectsOptimized += optCount;
                 }
@@ -817,6 +820,7 @@ namespace Synthos.SynSceneOptimizer
                     }
                 }
 
+                SynPipelineCompactor.RegisterGeneratedAsset(targetMesh);
                 if (targetMesh != null)
                 {
                     this.SetMesh(renderer, targetMesh);
@@ -1325,6 +1329,7 @@ namespace Synthos.SynSceneOptimizer
                 if (filter != null)
                 {
                     Mesh originalMesh = filter.sharedMesh;
+                    SynPipelineCompactor.RecordMeshReplacement(renderer, originalMesh);
                     filter.sharedMesh = mesh;
 
                     var collider = mr.GetComponent<MeshCollider>();
@@ -1337,6 +1342,7 @@ namespace Synthos.SynSceneOptimizer
             else if (renderer is SkinnedMeshRenderer smr)
             {
                 Mesh originalMesh = smr.sharedMesh;
+                SynPipelineCompactor.RecordMeshReplacement(renderer, originalMesh);
                 smr.sharedMesh = mesh;
 
                 var collider = smr.GetComponent<MeshCollider>();

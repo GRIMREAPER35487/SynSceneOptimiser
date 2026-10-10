@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using System.IO;
 using System.Collections.Generic;
 using UnityEditor;
@@ -15,6 +16,12 @@ namespace Synthos.SynSceneOptimizer
 
         [System.NonSerialized]
         private UnityEngine.Object _resolvedObj;
+
+        // Per-pipeline-run resolution against the scene being optimized (see SynProtectionData.BeginRun)
+        [System.NonSerialized]
+        private UnityEngine.Object _runResolvedObj;
+        [System.NonSerialized]
+        private int _runResolvedId = -1;
 
         public SynPersistentObjectReference() { }
 
@@ -58,6 +65,19 @@ namespace Synthos.SynSceneOptimizer
 
         public UnityEngine.Object Resolve()
         {
+            // During a pipeline run, resolve inside the scene being optimized. The editor-scene object cached in
+            // _resolvedObj is a different instance from the build/play copy and would never match it.
+            if (SynProtectionData.HasActiveRun)
+            {
+                if (directAsset != null) return directAsset;
+                if (_runResolvedId != SynProtectionData.ActiveRunId)
+                {
+                    _runResolvedId = SynProtectionData.ActiveRunId;
+                    _runResolvedObj = ResolveInScene(SynProtectionData.ActiveRunScene);
+                }
+                return _runResolvedObj;
+            }
+
             if (_resolvedObj != null) return _resolvedObj;
 
             // 1. If direct asset (Mesh, Material, Texture, Prefab)
@@ -95,7 +115,23 @@ namespace Synthos.SynSceneOptimizer
             return null;
         }
 
-        private static string GetHierarchyPath(Transform t)
+        /// <summary>
+        /// Resolves a scene reference inside a specific scene: by GlobalObjectId when it points into that scene,
+        /// otherwise by hierarchy path.
+        /// </summary>
+        public GameObject ResolveInScene(Scene scene)
+        {
+            if (!string.IsNullOrEmpty(globalObjectId) && GlobalObjectId.TryParse(globalObjectId, out GlobalObjectId gid))
+            {
+                var o = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
+                GameObject go = o as GameObject ?? (o as Component)?.gameObject;
+                if (go != null && go.scene == scene) return go;
+            }
+
+            return string.IsNullOrEmpty(scenePath) ? null : SynSceneQuery.FindGameObjectByPath(scene, scenePath);
+        }
+
+        internal static string GetHierarchyPath(Transform t)
         {
             if (t == null) return "";
             string path = t.name;
@@ -126,39 +162,118 @@ namespace Synthos.SynSceneOptimizer
         public List<SynPersistentObjectReference> simplifierSkipList = new List<SynPersistentObjectReference>();
 
         private static SynProtectionData instance;
-        private const string DefaultAssetPath = "Assets/SynSceneOptimiser/SynProtectionSettings.asset";
+        // Must match SynLegacyMigration.TargetSettingsPath; "Assets/SynSceneOptimiser" is a legacy folder
+        private const string DefaultAssetPath = "Assets/SynSceneOptimizer/SynProtectionSettings.asset";
 
         public static SynProtectionData GetInstance()
         {
             if (instance == null)
             {
-                // 1. Search for any existing SynProtectionData asset anywhere in the project
-                string[] guids = AssetDatabase.FindAssets("t:SynProtectionData");
-                if (guids != null && guids.Length > 0)
+                // 1. Search for an existing SynProtectionData asset. Only copies under Assets/ are used:
+                //    anything under Packages/ is read-only or replaced on package update.
+                string projectPath = null;
+                string packagePath = null;
+                foreach (string guid in AssetDatabase.FindAssets("t:SynProtectionData"))
                 {
-                    string foundPath = AssetDatabase.GUIDToAssetPath(guids[0]);
-                    instance = AssetDatabase.LoadAssetAtPath<SynProtectionData>(foundPath);
+                    string foundPath = AssetDatabase.GUIDToAssetPath(guid);
+                    if (foundPath.StartsWith("Assets/"))
+                    {
+                        projectPath = foundPath;
+                        break;
+                    }
+                    if (packagePath == null) packagePath = foundPath;
                 }
 
-                // 2. If not found anywhere, create one at default path in Assets
+                if (projectPath != null)
+                {
+                    instance = AssetDatabase.LoadAssetAtPath<SynProtectionData>(projectPath);
+                }
+
+                // 2. If not found in Assets, create one at the default path. Settings that older versions
+                //    stored inside the package folder are carried over so user edits are not lost.
                 if (instance == null)
                 {
-                    string dir = Path.GetDirectoryName(DefaultAssetPath).Replace('\\', '/');
-                    if (!Directory.Exists(dir))
+                    EnsureAssetFolder(Path.GetDirectoryName(DefaultAssetPath).Replace('\\', '/'));
+
+                    if (packagePath != null && AssetDatabase.CopyAsset(packagePath, DefaultAssetPath))
                     {
-                        Directory.CreateDirectory(dir);
+                        Debug.Log($"[SYN SCENE OPTIMIZER] Moved protection settings out of the package folder: '{packagePath}' -> '{DefaultAssetPath}'.");
+                        instance = AssetDatabase.LoadAssetAtPath<SynProtectionData>(DefaultAssetPath);
                     }
-                    instance = ScriptableObject.CreateInstance<SynProtectionData>();
-                    AssetDatabase.CreateAsset(instance, DefaultAssetPath);
-                    AssetDatabase.SaveAssets();
+
+                    if (instance == null)
+                    {
+                        instance = ScriptableObject.CreateInstance<SynProtectionData>();
+                        AssetDatabase.CreateAsset(instance, DefaultAssetPath);
+                        AssetDatabase.SaveAssetIfDirty(instance);
+                    }
                 }
             }
             return instance;
         }
 
+        private static void EnsureAssetFolder(string folder)
+        {
+            if (AssetDatabase.IsValidFolder(folder)) return;
+            string parent = Path.GetDirectoryName(folder).Replace('\\', '/');
+            EnsureAssetFolder(parent);
+            AssetDatabase.CreateFolder(parent, Path.GetFileName(folder));
+        }
+
+        // ---- Pipeline run scope: protected objects resolved once against the scene being optimized ----
+        private static HashSet<GameObject> runProtectedObjects;
+        public static bool HasActiveRun { get; private set; }
+        public static Scene ActiveRunScene { get; private set; }
+        public static int ActiveRunId { get; private set; }
+
+        /// <summary>
+        /// Resolves every protected scene object inside <paramref name="scene"/> (the build or play copy) so
+        /// IsProtected matches the objects actually being optimized, in O(depth) per check.
+        /// </summary>
+        public static void BeginRun(Scene scene)
+        {
+            ActiveRunScene = scene;
+            ActiveRunId++;
+            HasActiveRun = true;
+            runProtectedObjects = new HashSet<GameObject>();
+
+            var data = GetInstance();
+            if (data == null) return;
+
+            foreach (var refObj in data.protectedSceneObjects)
+            {
+                if (refObj?.Resolve() is GameObject go) runProtectedObjects.Add(go);
+            }
+
+            foreach (var legacy in data.protectedGameObjects)
+            {
+                if (legacy == null) continue;
+                GameObject match = legacy.scene == scene
+                    ? legacy
+                    : SynSceneQuery.FindGameObjectByPath(scene, SynPersistentObjectReference.GetHierarchyPath(legacy.transform));
+                if (match != null) runProtectedObjects.Add(match);
+            }
+        }
+
+        public static void EndRun()
+        {
+            HasActiveRun = false;
+            runProtectedObjects = null;
+        }
+
         public static bool IsProtected(GameObject go)
         {
             if (go == null) return false;
+
+            if (HasActiveRun && runProtectedObjects != null)
+            {
+                for (Transform ancestor = go.transform; ancestor != null; ancestor = ancestor.parent)
+                {
+                    if (runProtectedObjects.Contains(ancestor.gameObject)) return true;
+                }
+                return false;
+            }
+
             var data = GetInstance();
             if (data == null) return false;
 

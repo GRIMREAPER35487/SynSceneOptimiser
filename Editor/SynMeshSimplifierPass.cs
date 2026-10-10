@@ -225,6 +225,15 @@ namespace Synthos.SynSceneOptimizer
             EditorGUI.EndDisabledGroup();
             EditorGUI.indentLevel--;
 
+            EditorGUILayout.Space(5);
+            bool skipLightmapped = SynSceneOptimizerSettings.GetBool("MeshSimplifier_SkipLightmapped", true);
+            bool newSkipLightmapped = EditorGUILayout.Toggle(new GUIContent("Skip Lightmapped Meshes", "Never decimate renderers that use baked lightmaps. Decimating after a bake distorts the lightmap UVs and causes smearing or black seams."), skipLightmapped);
+            if (newSkipLightmapped != skipLightmapped)
+            {
+                SynSceneOptimizerSettings.SetBool("MeshSimplifier_SkipLightmapped", newSkipLightmapped);
+                showDryRunResults = false;
+            }
+
             // 4. Custom Preservation List GUI (With gentle decimation slider)
             EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("Mesh Simplifier Preservation List (Custom Ratio)", EditorStyles.boldLabel);
@@ -525,6 +534,7 @@ namespace Synthos.SynSceneOptimizer
             EnsureLocalSkipListLoaded();
 
             // Auto-Tune Tier Ratios if using Scene Cap and Dynamic Tiers before execution
+            autoTunedTierRatios = null;
             if (isMobileMode && useSceneCap && useDynamicTiers)
             {
                 AutoTuneTierRatios(sceneTriangleCap);
@@ -598,9 +608,11 @@ namespace Synthos.SynSceneOptimizer
 
             bool usePreserveRatio = SynSceneOptimizerSettings.GetBool("MeshSimplifier_UsePreserveRatio", false);
             float preserveRatio = SynSceneOptimizerSettings.GetFloat("MeshSimplifier_PreserveRatio", 0.80f);
+            bool skipLightmapped = SynSceneOptimizerSettings.GetBool("MeshSimplifier_SkipLightmapped", true);
 
             // Gather all active scene meshes and group by original unique Mesh
             var meshToRenderers = new Dictionary<Mesh, List<Renderer>>();
+            var preservedRenderers = new HashSet<Renderer>();
             
             // Sum counts for every single instance/renderer in the scene to match actual camera render counts
             int totalUnsimplifiableRenderedTris = 0;
@@ -632,23 +644,31 @@ namespace Synthos.SynSceneOptimizer
 
                 int triCount = GetTriangleCount(mesh);
 
+                // Earlier passes (dedup, memory optimizer, palettes) may have swapped the mesh, so user
+                // lists are matched against both the current and the pre-pipeline mesh
+                Mesh originalMesh = SynPipelineCompactor.GetOriginalMesh(r, mesh);
+
                 // Check global protection settings
-                bool isMeshGloballyProtected = SynProtectionData.IsProtected(mesh);
+                bool isMeshGloballyProtected = SynProtectionData.IsProtected(mesh) || SynProtectionData.IsProtected(originalMesh);
                 bool isGoGloballyProtected = SynProtectionData.IsProtected(r.gameObject);
 
                 // Check local skip list settings (always untouchable)
-                bool isMeshLocallySkipped = locallySkippedMeshes.Contains(mesh);
+                bool isMeshLocallySkipped = locallySkippedMeshes.Contains(mesh) || locallySkippedMeshes.Contains(originalMesh);
                 bool isGoLocallySkipped = IsLocalGoProtected(r.gameObject, locallySkippedGameObjects);
 
                 // Check local preservation list settings
-                bool isMeshLocallyProtected = locallyProtectedMeshes.Contains(mesh);
+                bool isMeshLocallyProtected = locallyProtectedMeshes.Contains(mesh) || locallyProtectedMeshes.Contains(originalMesh);
                 bool isGoLocallyProtected = IsLocalGoProtected(r.gameObject, locallyProtectedGameObjects);
+
+                // Baked lightmaps were rendered against the full-resolution UV2 layout; decimating afterwards
+                // collapses small UV charts and smears the lightmap. 0xFFFE = static with Scale In Lightmap 0 (probe-lit).
+                bool isLightmapped = r.lightmapIndex >= 0 && r.lightmapIndex < 0xFFFE;
 
                 bool isGloballyProtected = isMeshGloballyProtected || isGoGloballyProtected;
                 bool isLocallySkipped = isMeshLocallySkipped || isGoLocallySkipped;
                 bool isLocallyProtected = isMeshLocallyProtected || isGoLocallyProtected;
 
-                if (isGloballyProtected || isLocallySkipped)
+                if (isGloballyProtected || isLocallySkipped || (skipLightmapped && isLightmapped))
                 {
                     totalUnsimplifiableRenderedTris += triCount;
                 }
@@ -656,6 +676,7 @@ namespace Synthos.SynSceneOptimizer
                 {
                     if (usePreserveRatio)
                     {
+                        preservedRenderers.Add(r);
                         // Add to simplifiable list so it gets processed
                         if (!meshToRenderers.ContainsKey(mesh))
                         {
@@ -747,7 +768,7 @@ namespace Synthos.SynSceneOptimizer
                 Mesh originalMesh = kvp.Key;
 
                 float ratio;
-                bool isMeshLocallyProtected = locallyProtectedMeshes.Contains(originalMesh) || IsLocalGoProtected(kvp.Value[0].gameObject, locallyProtectedGameObjects);
+                bool isMeshLocallyProtected = kvp.Value.Exists(preservedRenderers.Contains);
 
                 if (isMeshLocallyProtected && usePreserveRatio)
                 {
@@ -885,8 +906,20 @@ namespace Synthos.SynSceneOptimizer
             Debug.Log("[SYN SCENE OPTIMIZER] " + logMsg);
         }
 
+        // Per-run ratios computed by AutoTuneTierRatios (50k, 20k, 8k, 4k, default); null = use the user's sliders
+        private static float[] autoTunedTierRatios;
+
         private float GetTierRatio(int triCount)
         {
+            if (autoTunedTierRatios != null)
+            {
+                if (triCount >= 50000) return autoTunedTierRatios[0];
+                if (triCount >= 20000) return autoTunedTierRatios[1];
+                if (triCount >= 8000) return autoTunedTierRatios[2];
+                if (triCount >= 4000) return autoTunedTierRatios[3];
+                return autoTunedTierRatios[4];
+            }
+
             if (triCount >= 50000)
                 return SynSceneOptimizerSettings.GetFloat("MeshSimplifier_TierRatio_50k", 0.20f);
             if (triCount >= 20000)
@@ -979,6 +1012,7 @@ namespace Synthos.SynSceneOptimizer
             EnsureLocalSkipListLoaded();
 
             // Auto-Tune Tier Ratios if using Scene Cap and Dynamic Tiers during Dry Run
+            autoTunedTierRatios = null;
             if (isMobileMode && useSceneCap && useDynamicTiers)
             {
                 AutoTuneTierRatios(sceneTriangleCap);
@@ -1479,11 +1513,7 @@ namespace Synthos.SynSceneOptimizer
             if (budget <= 0)
             {
                 // Can't fit, force everything to 10%
-                SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_50k", 0.10f);
-                SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_20k", 0.10f);
-                SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_8k", 0.10f);
-                SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_4k", 0.10f);
-                SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_Default", 0.10f);
+                autoTunedTierRatios = new[] { 0.10f, 0.10f, 0.10f, 0.10f, 0.10f };
                 return;
             }
 
@@ -1632,12 +1662,8 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            // Save the newly optimized ratios to Settings
-            SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_50k", r50k);
-            SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_20k", r20k);
-            SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_8k", r8k);
-            SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_4k", r4k);
-            SynSceneOptimizerSettings.SetFloat("MeshSimplifier_TierRatio_Default", rDef);
+            // Use the tuned ratios for this run only; the user's tier sliders are never overwritten
+            autoTunedTierRatios = new[] { r50k, r20k, r8k, r4k, rDef };
         }
     }
 }

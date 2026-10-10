@@ -52,14 +52,14 @@ namespace Synthos.SynSceneOptimizer
                 SynSceneOptimizerSettings.SetBool("MeshDeduplicator_DisableBatchingOnMeshes", newDisableBatchingMeshes);
             }
 
-            bool disableBatchingMats = SynSceneOptimizerSettings.GetBool("MeshDeduplicator_DisableBatchingOnMats", true);
-            bool newDisableBatchingMats = EditorGUILayout.Toggle(
-                new GUIContent("Disable Batching on Materials", "Remove the Batching Static flag on GameObjects whose materials are queued for instancing, letting GPU instancing work."), 
-                disableBatchingMats
-            );
-            if (newDisableBatchingMats != disableBatchingMats)
+            int minInstances = SynSceneOptimizerSettings.GetInt("MeshDeduplicator_MinInstances", 4);
+            int newMinInstances = Mathf.Max(2, EditorGUILayout.IntField(
+                new GUIContent("Min Instances To Unbatch", "Only renderers drawing the same mesh with the same materials can be GPU instanced. Static batching is only removed from such groups when they have at least this many renderers; everything else keeps Batching Static."),
+                minInstances
+            ));
+            if (newMinInstances != minInstances)
             {
-                SynSceneOptimizerSettings.SetBool("MeshDeduplicator_DisableBatchingOnMats", newDisableBatchingMats);
+                SynSceneOptimizerSettings.SetInt("MeshDeduplicator_MinInstances", newMinInstances);
             }
 
             bool logConsolidation = SynSceneOptimizerSettings.GetBool("MeshDeduplicator_LogConsolidation", true);
@@ -78,7 +78,7 @@ namespace Synthos.SynSceneOptimizer
             bool dedupEnabled = SynSceneOptimizerSettings.GetBool("MeshDeduplicator_DeduplicateMeshes", true);
             bool instancingEnabled = SynSceneOptimizerSettings.GetBool("MeshDeduplicator_QueueInstancing", true);
             bool disableBatchingOnMeshes = SynSceneOptimizerSettings.GetBool("MeshDeduplicator_DisableBatchingOnMeshes", true);
-            bool disableBatchingOnMats = SynSceneOptimizerSettings.GetBool("MeshDeduplicator_DisableBatchingOnMats", true);
+            int minInstances = Mathf.Max(2, SynSceneOptimizerSettings.GetInt("MeshDeduplicator_MinInstances", 4));
             bool logEnabled = SynSceneOptimizerSettings.GetBool("MeshDeduplicator_LogConsolidation", true);
 
             if (!dedupEnabled) return;
@@ -187,144 +187,126 @@ namespace Synthos.SynSceneOptimizer
                 return;
             }
 
-            // 3. Redirect duplicate meshes to their master mesh, collect materials, and turn off batching
+            // 3. Redirect duplicate meshes to their master mesh
             int totalRenderersUpdated = 0;
-            HashSet<Material> materialsToQueue = new HashSet<Material>();
+            var consolidatedFamilies = new Dictionary<Mesh, List<Renderer>>(); // master mesh -> every renderer now using it
 
             foreach (var kvp in meshMap)
             {
                 Mesh duplicateMesh = kvp.Key;
                 Mesh masterMesh = kvp.Value;
-
                 if (duplicateMesh == masterMesh) continue;
 
-                // Disable batching on master mesh renderers first to ensure the master is also instanced
-                if (disableBatchingOnMeshes && meshToRenderers.TryGetValue(masterMesh, out var masterRenderers))
+                if (!consolidatedFamilies.TryGetValue(masterMesh, out var family))
                 {
-                    foreach (Renderer r in masterRenderers)
-                    {
-                        if (ShouldDisableBatching(r))
-                        {
-                            StaticEditorFlags flags = GameObjectUtility.GetStaticEditorFlags(r.gameObject);
-                            if ((flags & StaticEditorFlags.BatchingStatic) != 0)
-                            {
-                                GameObjectUtility.SetStaticEditorFlags(r.gameObject, flags & ~StaticEditorFlags.BatchingStatic);
-                            }
-                        }
-                    }
+                    family = new List<Renderer>();
+                    if (meshToRenderers.TryGetValue(masterMesh, out var masterRenderers)) family.AddRange(masterRenderers);
+                    consolidatedFamilies[masterMesh] = family;
                 }
 
-                if (meshToRenderers.TryGetValue(duplicateMesh, out var affectedRenderers))
+                if (!meshToRenderers.TryGetValue(duplicateMesh, out var affectedRenderers)) continue;
+                foreach (Renderer r in affectedRenderers)
                 {
-                    foreach (Renderer r in affectedRenderers)
+                    if (r is MeshRenderer)
                     {
-                        if (r is MeshRenderer)
+                        MeshFilter mf = r.GetComponent<MeshFilter>();
+                        if (mf != null)
                         {
-                            MeshFilter mf = r.GetComponent<MeshFilter>();
-                            if (mf != null)
-                            {
-                                mf.sharedMesh = masterMesh;
-                                EditorUtility.SetDirty(mf);
-                                totalRenderersUpdated++;
-                            }
-                        }
-                        else if (r is SkinnedMeshRenderer)
-                        {
-                            SkinnedMeshRenderer smr = (SkinnedMeshRenderer)r;
-                            smr.sharedMesh = masterMesh;
-                            EditorUtility.SetDirty(smr);
+                            SynPipelineCompactor.RecordMeshReplacement(r, mf.sharedMesh);
+                            mf.sharedMesh = masterMesh;
+                            EditorUtility.SetDirty(mf);
                             totalRenderersUpdated++;
                         }
+                    }
+                    else if (r is SkinnedMeshRenderer smr)
+                    {
+                        SynPipelineCompactor.RecordMeshReplacement(r, smr.sharedMesh);
+                        smr.sharedMesh = masterMesh;
+                        EditorUtility.SetDirty(smr);
+                        totalRenderersUpdated++;
+                    }
+                    family.Add(r);
+                }
+            }
 
-                        if (disableBatchingOnMeshes && ShouldDisableBatching(r))
+            // 4. GPU instancing only merges renderers that draw the same mesh with the same material list.
+            //    Static batching is traded away only for such groups, and only when they are large enough;
+            //    every other renderer keeps Batching Static so draw calls never go up.
+            var instanceGroups = new Dictionary<string, List<Renderer>>();
+            foreach (var family in consolidatedFamilies)
+            {
+                foreach (Renderer r in family.Value)
+                {
+                    if (r == null) continue;
+                    var key = new System.Text.StringBuilder().Append(family.Key.GetInstanceID());
+                    foreach (Material mat in r.sharedMaterials)
+                    {
+                        key.Append(':').Append(mat != null ? mat.GetInstanceID() : 0);
+                    }
+                    string groupKey = key.ToString();
+                    if (!instanceGroups.TryGetValue(groupKey, out var group))
+                    {
+                        group = new List<Renderer>();
+                        instanceGroups[groupKey] = group;
+                    }
+                    group.Add(r);
+                }
+            }
+
+            HashSet<Material> materialsToQueue = new HashSet<Material>();
+            int unbatchedCount = 0;
+            foreach (var group in instanceGroups.Values)
+            {
+                if (group.Count < minInstances) continue;
+
+                foreach (Renderer r in group)
+                {
+                    // Per-renderer MaterialPropertyBlocks (e.g. Bakery RNM/SH lighting data) prevent instancing,
+                    // so those renderers keep static batching
+                    if (r.HasPropertyBlock()) continue;
+
+                    bool willInstance = instancingEnabled || AllMaterialsInstanced(r);
+                    if (!willInstance) continue;
+
+                    if (instancingEnabled)
+                    {
+                        foreach (Material mat in r.sharedMaterials)
                         {
-                            StaticEditorFlags flags = GameObjectUtility.GetStaticEditorFlags(r.gameObject);
-                            if ((flags & StaticEditorFlags.BatchingStatic) != 0)
-                            {
-                                GameObjectUtility.SetStaticEditorFlags(r.gameObject, flags & ~StaticEditorFlags.BatchingStatic);
-                            }
+                            if (mat != null) materialsToQueue.Add(mat);
                         }
+                    }
 
-                        if (instancingEnabled)
+                    if (disableBatchingOnMeshes && ShouldDisableBatching(r))
+                    {
+                        StaticEditorFlags flags = GameObjectUtility.GetStaticEditorFlags(r.gameObject);
+                        if ((flags & StaticEditorFlags.BatchingStatic) != 0)
                         {
-                            foreach (Material mat in r.sharedMaterials)
-                            {
-                                if (mat != null)
-                                {
-                                    materialsToQueue.Add(mat);
-                                }
-                            }
+                            GameObjectUtility.SetStaticEditorFlags(r.gameObject, flags & ~StaticEditorFlags.BatchingStatic);
+                            unbatchedCount++;
                         }
                     }
                 }
             }
 
-            // 4. Queue materials for GPU Instancing in the staging system, and disable batching on those materials
             int instancingCount = 0;
-            if (instancingEnabled && materialsToQueue.Count > 0)
+            foreach (Material mat in materialsToQueue)
             {
-                // Also grab materials from the master mesh renderers to ensure all sharing renderers support instancing
-                foreach (var kvp in meshMap)
+                var matState = SynPipelineCompactor.GetStagingState(mat);
+                if (matState != null && !matState.IsGPUInstanced)
                 {
-                    Mesh duplicateMesh = kvp.Key;
-                    Mesh masterMesh = kvp.Value;
-                    if (duplicateMesh == masterMesh) continue;
-
-                    if (meshToRenderers.TryGetValue(masterMesh, out var masterRenderers))
+                    matState.IsGPUInstanced = true;
+                    matState.IsDirty = true;
+                    if (!matState.AppliedPassTags.Contains("Inst"))
                     {
-                        foreach (Renderer r in masterRenderers)
-                        {
-                            foreach (Material mat in r.sharedMaterials)
-                            {
-                                if (mat != null)
-                                {
-                                    materialsToQueue.Add(mat);
-                                }
-                            }
-                        }
+                        matState.AppliedPassTags.Add("Inst");
                     }
-                }
-
-                foreach (Material mat in materialsToQueue)
-                {
-                    var matState = SynPipelineCompactor.GetStagingState(mat);
-                    if (matState != null && !matState.IsGPUInstanced)
-                    {
-                        matState.IsGPUInstanced = true;
-                        matState.IsDirty = true;
-                        if (!matState.AppliedPassTags.Contains("Inst"))
-                        {
-                            matState.AppliedPassTags.Add("Inst");
-                        }
-                        instancingCount++;
-                    }
-                }
-
-                if (disableBatchingOnMats)
-                {
-                    // Find all renderers in the scene using any of these queued materials and turn off static batching
-                    foreach (Renderer r in renderers)
-                    {
-                        if (r == null || !ShouldDisableBatching(r)) continue;
-                        foreach (Material mat in r.sharedMaterials)
-                        {
-                            if (mat != null && materialsToQueue.Contains(mat))
-                            {
-                                StaticEditorFlags flags = GameObjectUtility.GetStaticEditorFlags(r.gameObject);
-                                if ((flags & StaticEditorFlags.BatchingStatic) != 0)
-                                {
-                                    GameObjectUtility.SetStaticEditorFlags(r.gameObject, flags & ~StaticEditorFlags.BatchingStatic);
-                                }
-                                break;
-                            }
-                        }
-                    }
+                    instancingCount++;
                 }
             }
 
             // 5. Log consolidation result
-            string logMsg = string.Format("Consolidated {0} duplicate meshes across {1} renderers. Queued {2} materials for GPU Instancing.",
-                duplicateMeshCount, totalRenderersUpdated, instancingCount);
+            string logMsg = string.Format("Consolidated {0} duplicate meshes across {1} renderers. Queued {2} materials for GPU Instancing and moved {3} renderers from static batching to instancing.",
+                duplicateMeshCount, totalRenderersUpdated, instancingCount, unbatchedCount);
 
             SynPipelineCompactor.LogChange("Mesh Deduplicator", logMsg);
 
@@ -347,6 +329,15 @@ namespace Synthos.SynSceneOptimizer
                 return smr.sharedMesh;
             }
             return null;
+        }
+
+        private static bool AllMaterialsInstanced(Renderer r)
+        {
+            foreach (Material mat in r.sharedMaterials)
+            {
+                if (mat != null && !mat.enableInstancing) return false;
+            }
+            return true;
         }
 
         private bool ShouldDisableBatching(Renderer r)
@@ -499,7 +490,19 @@ namespace Synthos.SynSceneOptimizer
             public int[][] Indices;
             public BoneWeight[] BoneWeights;
             public Matrix4x4[] BindPoses;
+            public BlendShapeSnapshot[] BlendShapes;
             public ulong FastChecksum;
+
+            private const int UVChannelCount = 8;
+
+            public class BlendShapeSnapshot
+            {
+                public string Name;
+                public float[] FrameWeights;
+                public Vector3[][] DeltaVertices;
+                public Vector3[][] DeltaNormals;
+                public Vector3[][] DeltaTangents;
+            }
 
             public static MeshGeometrySnapshot Capture(Mesh mesh)
             {
@@ -516,18 +519,42 @@ namespace Synthos.SynSceneOptimizer
                     BindPoses = mesh.bindposes,
                     Topologies = new MeshTopology[mesh.subMeshCount],
                     Indices = new int[mesh.subMeshCount][],
-                    UVs = new List<Vector4>[4]
+                    UVs = new List<Vector4>[UVChannelCount],
+                    BlendShapes = new BlendShapeSnapshot[mesh.blendShapeCount]
                 };
 
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < UVChannelCount; i++)
                 {
                     snap.UVs[i] = new List<Vector4>();
                     mesh.GetUVs(i, snap.UVs[i]);
                 }
 
+                for (int s = 0; s < mesh.blendShapeCount; s++)
+                {
+                    int frameCount = mesh.GetBlendShapeFrameCount(s);
+                    var shape = new BlendShapeSnapshot
+                    {
+                        Name = mesh.GetBlendShapeName(s),
+                        FrameWeights = new float[frameCount],
+                        DeltaVertices = new Vector3[frameCount][],
+                        DeltaNormals = new Vector3[frameCount][],
+                        DeltaTangents = new Vector3[frameCount][]
+                    };
+                    for (int f = 0; f < frameCount; f++)
+                    {
+                        shape.FrameWeights[f] = mesh.GetBlendShapeFrameWeight(s, f);
+                        shape.DeltaVertices[f] = new Vector3[mesh.vertexCount];
+                        shape.DeltaNormals[f] = new Vector3[mesh.vertexCount];
+                        shape.DeltaTangents[f] = new Vector3[mesh.vertexCount];
+                        mesh.GetBlendShapeFrameVertices(s, f, shape.DeltaVertices[f], shape.DeltaNormals[f], shape.DeltaTangents[f]);
+                    }
+                    snap.BlendShapes[s] = shape;
+                }
+
                 ulong checksum = 17;
                 checksum = checksum * 31 + (ulong)snap.VertexCount;
                 checksum = checksum * 31 + (ulong)snap.SubMeshCount;
+                checksum = checksum * 31 + (ulong)snap.BlendShapes.Length;
 
                 for (int i = 0; i < snap.SubMeshCount; i++)
                 {
@@ -581,8 +608,8 @@ namespace Synthos.SynSceneOptimizer
                     }
                 }
 
-                // 4. Compare UVs (channels 0 to 3)
-                for (int channel = 0; channel < 4; channel++)
+                // 4. Compare UVs (all channels)
+                for (int channel = 0; channel < UVChannelCount; channel++)
                 {
                     var uvsA = UVs[channel];
                     var uvsB = other.UVs[channel];
@@ -635,6 +662,32 @@ namespace Synthos.SynSceneOptimizer
                     if (BindPoses[i] != other.BindPoses[i]) return false;
                 }
 
+                // 9. Compare blend shapes (names drive animator/Udon bindings, deltas drive the result)
+                if (BlendShapes.Length != other.BlendShapes.Length) return false;
+                for (int s = 0; s < BlendShapes.Length; s++)
+                {
+                    var a = BlendShapes[s];
+                    var b = other.BlendShapes[s];
+                    if (a.Name != b.Name || a.FrameWeights.Length != b.FrameWeights.Length) return false;
+                    for (int f = 0; f < a.FrameWeights.Length; f++)
+                    {
+                        if (a.FrameWeights[f] != b.FrameWeights[f]) return false;
+                        if (!SequenceEqual(a.DeltaVertices[f], b.DeltaVertices[f])) return false;
+                        if (!SequenceEqual(a.DeltaNormals[f], b.DeltaNormals[f])) return false;
+                        if (!SequenceEqual(a.DeltaTangents[f], b.DeltaTangents[f])) return false;
+                    }
+                }
+
+                return true;
+            }
+
+            private static bool SequenceEqual(Vector3[] a, Vector3[] b)
+            {
+                if (a.Length != b.Length) return false;
+                for (int i = 0; i < a.Length; i++)
+                {
+                    if (a[i] != b[i]) return false;
+                }
                 return true;
             }
         }

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -74,6 +73,13 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
+            // Layers players and the mirror itself render on must never be stripped, whatever the custom list says
+            foreach (string essential in EssentialLayers)
+            {
+                int layer = LayerMask.NameToLayer(essential);
+                if (layer >= 0) layersToStripMask &= ~(1 << layer);
+            }
+
             if (layersToStripMask == 0) return;
 
             int totalMirrors = 0;
@@ -101,40 +107,37 @@ namespace Synthos.SynSceneOptimizer
                 {
                     totalMirrors++;
 
-                    var reflectLayersProp = c.GetType().GetProperty("reflectLayers", BindingFlags.Public | BindingFlags.Instance);
-                    if (reflectLayersProp != null)
+                    // Read the mask through serialization so it works whatever the SDK names the field
+                    var serializedMirror = new SerializedObject(c);
+                    SerializedProperty maskProp = FindReflectLayersProperty(serializedMirror);
+                    if (maskProp == null)
                     {
-                        try
-                        {
-                            LayerMask originalMask = (LayerMask)reflectLayersProp.GetValue(c);
-                            
-                            // Check if mirror has any of the target strip layers enabled
-                            if ((originalMask.value & layersToStripMask) != 0)
-                            {
-                                int newMaskValue = originalMask.value & ~layersToStripMask;
-                                reflectLayersProp.SetValue(c, (LayerMask)newMaskValue);
-                                EditorUtility.SetDirty(c.gameObject);
-                                optimizedCount++;
+                        Debug.LogWarning($"[MirrorOptimizer] Could not find the reflect layers mask on mirror '{c.gameObject.name}' ({typeName}). It was left unchanged.");
+                        continue;
+                    }
 
-                                if (logOptimized)
+                    int originalMask = maskProp.intValue;
+
+                    // Check if mirror has any of the target strip layers enabled
+                    if ((originalMask & layersToStripMask) != 0)
+                    {
+                        maskProp.intValue = originalMask & ~layersToStripMask;
+                        serializedMirror.ApplyModifiedPropertiesWithoutUndo();
+                        optimizedCount++;
+
+                        if (logOptimized)
+                        {
+                            // Log details about which layers were stripped
+                            var strippedNames = new List<string>();
+                            for (int i = 0; i < 32; i++)
+                            {
+                                if ((layersToStripMask & (1 << i)) != 0 && (originalMask & (1 << i)) != 0)
                                 {
-                                    // Log details about which layers were stripped
-                                    var strippedNames = new List<string>();
-                                    for (int i = 0; i < 32; i++)
-                                    {
-                                        if ((layersToStripMask & (1 << i)) != 0 && (originalMask.value & (1 << i)) != 0)
-                                        {
-                                            string layerName = LayerMask.LayerToName(i);
-                                            strippedNames.Add(string.IsNullOrEmpty(layerName) ? $"Layer {i}" : layerName);
-                                        }
-                                    }
-                                    Debug.Log($"[MirrorOptimizer] Stripped layers [<b>{string.Join(", ", strippedNames)}</b>] from Mirror culling mask on <b>{c.gameObject.name}</b>.");
+                                    string layerName = LayerMask.LayerToName(i);
+                                    strippedNames.Add(string.IsNullOrEmpty(layerName) ? $"Layer {i}" : layerName);
                                 }
                             }
-                        }
-                        catch (Exception e)
-                        {
-                            Debug.LogError($"[MirrorOptimizer] Error accessing reflectLayers property on {c.gameObject.name}: {e.Message}");
+                            Debug.Log($"[MirrorOptimizer] Stripped layers [<b>{string.Join(", ", strippedNames)}</b>] from Mirror culling mask on <b>{c.gameObject.name}</b>.");
                         }
                     }
                 }
@@ -147,6 +150,21 @@ namespace Synthos.SynSceneOptimizer
                     string.Format("Sanitized culling masks on {0}/{1} scene mirrors.", optimizedCount, totalMirrors)
                 );
             }
+        }
+
+        private static readonly string[] EssentialLayers = { "Player", "PlayerLocal", "MirrorReflection" };
+
+        // VRChat SDK3 serializes the mask as m_ReflectLayers; older SDKs and wrappers have used other names
+        private static readonly string[] ReflectLayerFieldNames = { "m_ReflectLayers", "reflectLayers", "ReflectLayers" };
+
+        private static SerializedProperty FindReflectLayersProperty(SerializedObject serializedMirror)
+        {
+            foreach (string fieldName in ReflectLayerFieldNames)
+            {
+                SerializedProperty prop = serializedMirror.FindProperty(fieldName);
+                if (prop != null && prop.propertyType == SerializedPropertyType.LayerMask) return prop;
+            }
+            return null;
         }
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
@@ -180,7 +198,7 @@ namespace Synthos.SynSceneOptimizer
             }
 
             string customStrip = SynSceneOptimizerSettings.GetString("Mirrors_CustomStrip", "");
-            string newCustomStrip = EditorGUILayout.TextField(new GUIContent("Custom Layers (CSV)", "Comma-separated list of additional layer names to strip from mirrors (e.g. Shadows, Effects, Particles)."), customStrip);
+            string newCustomStrip = EditorGUILayout.TextField(new GUIContent("Custom Layers (CSV)", "Comma-separated list of additional layer names to strip from mirrors (e.g. Shadows, Effects, Particles). Player, PlayerLocal and MirrorReflection are never stripped."), customStrip);
             if (newCustomStrip != customStrip)
             {
                 SynSceneOptimizerSettings.SetString("Mirrors_CustomStrip", newCustomStrip);

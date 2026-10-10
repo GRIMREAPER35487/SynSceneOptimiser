@@ -46,50 +46,33 @@ namespace Synthos.SynSceneOptimizer
             EditorPrefs.SetInt(KeyPrefix + key, value);
         }
 
+        /// <summary>
+        /// Signature of settings that change the CONTENT of cached assets without being part of their cache keys.
+        /// A change purges the platform cache, so only list such settings here:
+        /// - Pass on/off toggles are excluded: disabling a pass never makes another pass's cached output stale.
+        /// - Texture sizes, mesh ratios, mesh-memory flags, and material bake parameters (shader, instancing)
+        ///   are already hashed into each asset's key and are excluded so tuning them doesn't wipe the cache.
+        /// Bump CacheVersion whenever a pass changes what it writes to the cache.
+        /// </summary>
         public static string GetSettingsSignature()
         {
             var sb = new System.Text.StringBuilder();
-            sb.Append("CacheVersion=2;");
+            sb.Append("CacheVersion=4;");
 
-            // Int keys
-            string[] intKeys = new[]
-            {
-                "SmartVRAM_MaxResPC", "SmartVRAM_MinResPC",
-                "SmartVRAM_MaxResAndroid", "SmartVRAM_MinResAndroid",
-                "MeshSimplifier_PC_MinTriangleCount", "MeshSimplifier_Mobile_MinTriangleCount",
-                "MeshSimplifier_Mobile_SceneTriangleCap"
-            };
-            foreach (var k in intKeys) sb.Append(k).Append('=').Append(GetInt(k)).Append(';');
-
-            // Float keys
-            string[] floatKeys = new[]
-            {
-                "SmartVRAM_HighComplexityThreshold", "SmartVRAM_LowComplexityThreshold",
-                "MeshSimplifier_PC_TargetRatio", "MeshSimplifier_Mobile_TargetRatio",
-                "MeshSimplifier_TierRatio_50k", "MeshSimplifier_TierRatio_20k",
-                "MeshSimplifier_TierRatio_8k", "MeshSimplifier_TierRatio_4k",
-                "MeshSimplifier_TierRatio_Default", "MeshSimplifier_PreserveRatio"
-            };
-            foreach (var k in floatKeys) sb.Append(k).Append('=').Append(GetFloat(k)).Append(';');
-
-            // Bool keys
+            // Color palette grouping/baking options shape palette textures and materials beyond their hashed inputs
             string[] boolKeys = new[]
             {
-                "GlobalPassesEnabled",
-                "Pass_SynEditorOnlyPrunerPass_Enabled", "EditorOnlyPruner_NukeTagged", "EditorOnlyPruner_StripEmptyRenderers",
-                "Pass_SynColorPalettePass_Enabled", "PaletteAtlas_OptimizeStatic", "PaletteAtlas_OptimizeNonStatic", "PaletteAtlas_IgnoreInstanced",
-                "Pass_synthos.mesh_simplifier_Enabled", "MeshSimplifier_PC_Enabled", "MeshSimplifier_Mobile_Enabled", "MeshSimplifier_Mobile_UseDynamicTiers", "MeshSimplifier_Mobile_UseSceneCap", "MeshSimplifier_UsePreserveRatio",
-                "Pass_SynSmartTextureVRAMPass_Enabled", "SmartVRAM_ProtectBakery", "SmartVRAM_ProtectMochie", "SmartVRAM_PruneUnusedSlots",
-                "Pass_SynDisableStochasticPass_Enabled",
-                "Pass_SynEnableMipStreamingPass_Enabled", "MipStreaming_IncludeLightmaps", "MipStreaming_IncludeParticles", "MipStreaming_IncludeUI", "MipStreaming_IncludeTerrain", "MipStreaming_IncludeSkybox", "MipStreaming_IncludePackages", "MipStreaming_EnableKaiser",
-                "Pass_SynAudioOptimizerPass_Enabled"
+                "PaletteAtlas_OptimizeStatic", "PaletteAtlas_OptimizeNonStatic", "PaletteAtlas_IgnoreInstanced",
+                "PaletteAtlas_ExtremeMode", "PaletteAtlas_GroupByChannel",
+                // Mip streaming writes m_StreamingMipmaps directly into cached .asset textures
+                "MipStreaming_IncludeLightmaps",
+                "MipStreaming_IncludeTerrain", "MipStreaming_IncludePackages"
             };
             foreach (var k in boolKeys) sb.Append(k).Append('=').Append(GetBool(k)).Append(';');
 
-            // String keys
             string[] stringKeys = new[]
             {
-                "MeshSimplifier_TargetPlatform", "PaletteAtlas_IgnoreMaterials", "SmartVRAM_ProtectedPatterns"
+                "PaletteAtlas_IgnoreMaterials"
             };
             foreach (var k in stringKeys) sb.Append(k).Append('=').Append(GetString(k)).Append(';');
 

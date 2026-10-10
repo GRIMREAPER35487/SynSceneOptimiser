@@ -76,7 +76,7 @@ namespace Synthos.SynSceneOptimizer
             }
 
             // Sort by Priority ascending
-            discoveredPasses.Sort((a, b) => a.Priority.CompareTo(b.Priority));
+            discoveredPasses.Sort((a, b) => a.Priority != b.Priority ? a.Priority.CompareTo(b.Priority) : string.CompareOrdinal(a.Id, b.Id));
         }
 
         private void OnGUI()
@@ -165,6 +165,15 @@ namespace Synthos.SynSceneOptimizer
             }
             GUILayout.EndHorizontal();
 
+            GUILayout.BeginHorizontal();
+            bool stopOnError = SynSceneOptimizerSettings.GetBool("StopBuildOnPassError", true);
+            bool newStopOnError = EditorGUILayout.ToggleLeft(new GUIContent("Stop Build If A Pass Fails", "If an optimization pass throws an error partway through, stop the build instead of uploading a partially optimized world. Play Mode always continues and logs the error."), stopOnError);
+            if (newStopOnError != stopOnError)
+            {
+                SynSceneOptimizerSettings.SetBool("StopBuildOnPassError", newStopOnError);
+            }
+            GUILayout.EndHorizontal();
+
             EditorGUILayout.Space(5);
 
             // Cache Management Panel (Per-Platform)
@@ -230,6 +239,21 @@ namespace Synthos.SynSceneOptimizer
                 EditorUtility.RevealInFinder(SynAssetCache.GetPlatformCachePath(currentPlat));
             }
             GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            int retentionDays = SynCacheJanitor.RetentionDays;
+            int newRetentionDays = Mathf.Max(1, EditorGUILayout.IntField(new GUIContent("Remove Unused After (days)", "Cached assets that no build or Play Mode run has used for this many days are deleted automatically after a build."), retentionDays));
+            if (newRetentionDays != retentionDays)
+            {
+                SynSceneOptimizerSettings.SetInt("CacheRetentionDays", newRetentionDays);
+            }
+            if (GUILayout.Button("Remove Stale Now", GUILayout.Height(18), GUILayout.Width(130)))
+            {
+                int removed = SynCacheJanitor.RemoveStaleEntries(newRetentionDays);
+                RefreshCacheStats();
+                Debug.Log($"[SYN SCENE OPTIMIZER] Cache cleanup: removed {removed} cached assets unused for {newRetentionDays}+ days.");
+            }
+            GUILayout.EndHorizontal();
             EditorGUILayout.EndVertical();
 
             EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
@@ -280,24 +304,38 @@ namespace Synthos.SynSceneOptimizer
 
                 foreach (var pass in group.Value)
                 {
-                    string toggleKey = string.Format("Pass_{0}_Enabled", pass.Id);
-                    bool isEnabled = SynSceneOptimizerSettings.GetBool(toggleKey, true);
+                    bool isEnabled = pass.IsEnabled;
 
                     GUILayout.BeginVertical(EditorStyles.helpBox);
-                    
+
+                    string label = pass.ModifiesSourceAssets ? $"{pass.Name}  [Modifies project assets]" : pass.Name;
                     bool newEnabled = EditorGUILayout.ToggleLeft(
-                        new GUIContent(pass.Name, pass.Description),
+                        new GUIContent(label, pass.Description),
                         isEnabled,
                         EditorStyles.boldLabel
                     );
 
+                    if (newEnabled && !isEnabled && pass.ModifiesSourceAssets)
+                    {
+                        newEnabled = EditorUtility.DisplayDialog(
+                            "Enable " + pass.Name + "?",
+                            "This pass permanently changes import settings on your own project assets every time the optimizer runs (including when entering Play Mode). These changes are not reverted.\n\nBack up your project before enabling it.",
+                            "Enable",
+                            "Cancel");
+                    }
+
                     if (newEnabled != isEnabled)
                     {
-                        SynSceneOptimizerSettings.SetBool(toggleKey, newEnabled);
+                        SynSceneOptimizerSettings.SetBool(pass.ToggleKey, newEnabled);
                     }
 
                     if (newEnabled)
                     {
+                        if (pass.ModifiesSourceAssets)
+                        {
+                            EditorGUILayout.HelpBox("Permanently modifies your project's asset import settings. Not reverted after the build.", MessageType.Warning);
+                        }
+
                         EditorGUI.indentLevel++;
                         float oldLabelWidth = EditorGUIUtility.labelWidth;
                         EditorGUIUtility.labelWidth = 230f;

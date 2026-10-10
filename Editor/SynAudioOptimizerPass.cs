@@ -19,9 +19,13 @@ namespace Synthos.SynSceneOptimizer
 
         public override int Priority => 30; // Run early-mid
         public override string Category => "Audio";
+        public override bool ModifiesSourceAssets => true;
 
         public override void Execute(Scene scene, List<Renderer> renderers)
         {
+            // Import settings don't affect a Play Mode test session; only touch the user's clips for real builds
+            if (Application.isPlaying) return;
+
             string scanMode = SynSceneOptimizerSettings.GetString("Audio_ScanMode", "SceneOnly");
             float vorbisQuality = SynSceneOptimizerSettings.GetFloat("Audio_VorbisQuality", 0.7f);
             bool logOptimized = SynSceneOptimizerSettings.GetBool("Audio_LogOptimized", true);

@@ -23,35 +23,28 @@ namespace Synthos.SynSceneOptimizer
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
-            EditorGUILayout.HelpBox("Enables Mipmap Streaming across all scene textures to dramatically reduce dynamic runtime VRAM. Base project textures are automatically reverted after build. Color palettes are strictly protected.", MessageType.Info);
+            EditorGUILayout.HelpBox("Enables Mipmap Streaming only on textures that benefit from it: textures with mipmaps, at least " + SynMipStreamingEligibility.MinStreamingSize + "px, sampled by mesh or terrain renderers. UI, sprites, cookies, lookup tables, ramps, palettes and point-filtered textures are skipped. Import settings are reverted after the build.", MessageType.Info);
 
             bool streamLightmaps = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeLightmaps", true);
-            bool newStreamLightmaps = EditorGUILayout.Toggle(new GUIContent("Include Lightmaps & Volumes", "Enables Mipmap Streaming on Bakery/Unity lightmaps and light volumes without downscaling them."), streamLightmaps);
+            bool newStreamLightmaps = EditorGUILayout.Toggle(new GUIContent("Include Lightmaps & Volumes", "Enables Mipmap Streaming on Bakery/Unity lightmaps without downscaling them."), streamLightmaps);
             if (newStreamLightmaps != streamLightmaps) SynSceneOptimizerSettings.SetBool("MipStreaming_IncludeLightmaps", newStreamLightmaps);
 
-            bool streamParticles = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeParticles", true);
-            bool newStreamParticles = EditorGUILayout.Toggle(new GUIContent("Include Particles & VFX", "Scans ParticleSystemRenderers, TrailRenderers, and LineRenderers for streaming."), streamParticles);
-            if (newStreamParticles != streamParticles) SynSceneOptimizerSettings.SetBool("MipStreaming_IncludeParticles", newStreamParticles);
-
-            bool streamUI = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeUI", true);
-            bool newStreamUI = EditorGUILayout.Toggle(new GUIContent("Include UI & Sprites", "Scans UI Canvas graphics, RawImages, and SpriteRenderers."), streamUI);
-            if (newStreamUI != streamUI) SynSceneOptimizerSettings.SetBool("MipStreaming_IncludeUI", newStreamUI);
-
             bool streamTerrain = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeTerrain", true);
-            bool newStreamTerrain = EditorGUILayout.Toggle(new GUIContent("Include Terrain Layers", "Scans Terrain splatmaps, normal maps, and diffuse layers."), streamTerrain);
+            bool newStreamTerrain = EditorGUILayout.Toggle(new GUIContent("Include Terrain Layers", "Scans Terrain diffuse, normal and mask layers."), streamTerrain);
             if (newStreamTerrain != streamTerrain) SynSceneOptimizerSettings.SetBool("MipStreaming_IncludeTerrain", newStreamTerrain);
-
-            bool streamSkybox = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeSkybox", true);
-            bool newStreamSkybox = EditorGUILayout.Toggle(new GUIContent("Include Skybox & Reflection Probes", "Enables streaming on the scene Skybox and custom Reflection Probes."), streamSkybox);
-            if (newStreamSkybox != streamSkybox) SynSceneOptimizerSettings.SetBool("MipStreaming_IncludeSkybox", newStreamSkybox);
 
             bool streamPackages = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludePackages", true);
             bool newStreamPackages = EditorGUILayout.Toggle(new GUIContent("Include Packages (AudioLink, etc.)", "Scans textures originating from Packages/ directory."), streamPackages);
             if (newStreamPackages != streamPackages) SynSceneOptimizerSettings.SetBool("MipStreaming_IncludePackages", newStreamPackages);
 
             bool enableKaiser = SynSceneOptimizerSettings.GetBool("MipStreaming_EnableKaiser", true);
-            bool newEnableKaiser = EditorGUILayout.Toggle(new GUIContent("Enforce Kaiser Mipmap Filter", "Sets Mipmap Filter to Kaiser on all scene textures for crisp, high-clarity textures in VR (stays on permanently)."), enableKaiser);
+            bool newEnableKaiser = EditorGUILayout.Toggle(new GUIContent("Enforce Kaiser Mipmap Filter", "Sets Mipmap Filter to Kaiser on streamed textures for crisp, high-clarity textures in VR. Applied for the build only and reverted afterwards."), enableKaiser);
             if (newEnableKaiser != enableKaiser) SynSceneOptimizerSettings.SetBool("MipStreaming_EnableKaiser", newEnableKaiser);
+
+            if (GUILayout.Button(new GUIContent("Repair Changes From Older Versions...", "Older versions of this pass permanently changed texture import settings. Review and undo those changes.")))
+            {
+                SynMipStreamingRepairWindow.Open();
+            }
         }
 
         public override void Execute(Scene scene, List<Renderer> renderers)
@@ -60,13 +53,9 @@ namespace Synthos.SynSceneOptimizer
             HashSet<Material> candidateMaterials = new HashSet<Material>();
 
             bool streamLightmaps = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeLightmaps", true);
-            bool streamParticles = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeParticles", true);
-            bool streamUI = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeUI", true);
             bool streamTerrain = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeTerrain", true);
-            bool streamSkybox = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludeSkybox", true);
             bool streamPackages = SynSceneOptimizerSettings.GetBool("MipStreaming_IncludePackages", true);
 
-            // 1. Collect from all scene GameObjects (Renderers, UI, Terrains, Probes, Lights)
             List<GameObject> rootObjects = new List<GameObject>();
             if (scene.IsValid() && scene.isLoaded)
             {
@@ -85,82 +74,34 @@ namespace Synthos.SynSceneOptimizer
             {
                 if (root == null) continue;
 
-                // 1a. All Renderers (Mesh, Skinned, Particles, Sprites, Trails, Lines)
-                Renderer[] allSceneRenderers = root.GetComponentsInChildren<Renderer>(true);
-                foreach (Renderer r in allSceneRenderers)
+                // 1. Mesh and Skinned renderers only: Unity's streaming system computes the visible mip level from
+                //    their bounds and UV density. Particles, UI, sprites, skyboxes, cookies and projectors can't be
+                //    measured, so streaming their textures saves nothing and can leave them blurry.
+                foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
                 {
-                    if (r == null) continue;
+                    if (r == null || !(r is MeshRenderer || r is SkinnedMeshRenderer)) continue;
                     if (SynProtectionData.IsProtected(r.gameObject)) continue;
 
-                    if (!streamParticles && (r is ParticleSystemRenderer || r is TrailRenderer || r is LineRenderer))
-                    {
-                        continue;
-                    }
-
-                    if (!streamUI && r is SpriteRenderer)
-                    {
-                        continue;
-                    }
-
-                    // Collect shared materials
                     Material[] mats = r.sharedMaterials;
-                    if (mats != null)
+                    if (mats == null) continue;
+                    foreach (Material mat in mats)
                     {
-                        foreach (Material mat in mats)
+                        if (mat != null && !SynProtectionData.IsProtected(mat))
                         {
-                            if (mat != null && !SynProtectionData.IsProtected(mat))
-                            {
-                                candidateMaterials.Add(mat);
-                            }
-                        }
-                    }
-
-                    // Special handling for SpriteRenderer
-                    if (r is SpriteRenderer sr && sr.sprite != null && sr.sprite.texture != null)
-                    {
-                        candidateTextures.Add(sr.sprite.texture);
-                    }
-
-                    // Special handling for ParticleSystemRenderer
-                    if (r is ParticleSystemRenderer psr)
-                    {
-                        if (psr.trailMaterial != null && !SynProtectionData.IsProtected(psr.trailMaterial))
-                        {
-                            candidateMaterials.Add(psr.trailMaterial);
+                            candidateMaterials.Add(mat);
                         }
                     }
                 }
 
-                // 1b. Canvas & UI Graphics
-                if (streamUI)
-                {
-                    var graphics = root.GetComponentsInChildren<UnityEngine.UI.Graphic>(true);
-                    foreach (var g in graphics)
-                    {
-                        if (g == null) continue;
-                        if (g.mainTexture is Texture2D uiTex)
-                        {
-                            candidateTextures.Add(uiTex);
-                        }
-                        if (g.material != null && !SynProtectionData.IsProtected(g.material))
-                        {
-                            candidateMaterials.Add(g.material);
-                        }
-                    }
-                }
-
-                // 1c. Terrain Components
+                // 2. Terrain layers (terrain renders through the streaming-aware terrain system)
                 if (streamTerrain)
                 {
-                    var terrains = root.GetComponentsInChildren<Terrain>(true);
-                    foreach (var t in terrains)
+                    foreach (var t in root.GetComponentsInChildren<Terrain>(true))
                     {
                         if (t == null || t.terrainData == null) continue;
-                        TerrainData td = t.terrainData;
-
-                        if (td.terrainLayers != null)
+                        if (t.terrainData.terrainLayers != null)
                         {
-                            foreach (var layer in td.terrainLayers)
+                            foreach (var layer in t.terrainData.terrainLayers)
                             {
                                 if (layer == null) continue;
                                 if (layer.diffuseTexture != null) candidateTextures.Add(layer.diffuseTexture);
@@ -168,61 +109,15 @@ namespace Synthos.SynSceneOptimizer
                                 if (layer.maskMapTexture != null) candidateTextures.Add(layer.maskMapTexture);
                             }
                         }
-
-                        if (td.detailPrototypes != null)
-                        {
-                            foreach (var dp in td.detailPrototypes)
-                            {
-                                if (dp.prototypeTexture != null) candidateTextures.Add(dp.prototypeTexture);
-                            }
-                        }
-
                         if (t.materialTemplate != null && !SynProtectionData.IsProtected(t.materialTemplate))
                         {
                             candidateMaterials.Add(t.materialTemplate);
                         }
                     }
                 }
-
-                // 1d. Reflection Probes
-                if (streamSkybox)
-                {
-                    var probes = root.GetComponentsInChildren<ReflectionProbe>(true);
-                    foreach (var probe in probes)
-                    {
-                        if (probe == null) continue;
-                        if (probe.customBakedTexture is Texture2D probeTex) candidateTextures.Add(probeTex);
-                    }
-                }
-
-                // 1e. Light Cookies
-                var lights = root.GetComponentsInChildren<Light>(true);
-                foreach (var light in lights)
-                {
-                    if (light != null && light.cookie is Texture2D cookieTex)
-                    {
-                        candidateTextures.Add(cookieTex);
-                    }
-                }
-
-                // 1f. Projectors
-                var projectors = root.GetComponentsInChildren<Projector>(true);
-                foreach (var proj in projectors)
-                {
-                    if (proj != null && proj.material != null && !SynProtectionData.IsProtected(proj.material))
-                    {
-                        candidateMaterials.Add(proj.material);
-                    }
-                }
             }
 
-            // 2. Collect from Skybox
-            if (streamSkybox && RenderSettings.skybox != null && !SynProtectionData.IsProtected(RenderSettings.skybox))
-            {
-                candidateMaterials.Add(RenderSettings.skybox);
-            }
-
-            // 3. Collect from Virtual Staged Materials in SynPipelineCompactor
+            // 3. Textures staged by earlier passes (replacements for renderer materials)
             foreach (var staged in SynPipelineCompactor.GetAllStagedMaterials())
             {
                 if (staged == null || staged.TrackedTextures == null) continue;
@@ -245,8 +140,7 @@ namespace Synthos.SynSceneOptimizer
                 {
                     if (ShaderUtil.GetPropertyType(shader, i) == ShaderUtil.ShaderPropertyType.TexEnv)
                     {
-                        string propName = ShaderUtil.GetPropertyName(shader, i);
-                        Texture tex = mat.GetTexture(propName);
+                        Texture tex = mat.GetTexture(ShaderUtil.GetPropertyName(shader, i));
                         if (tex is Texture2D tex2D)
                         {
                             candidateTextures.Add(tex2D);
@@ -255,7 +149,7 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            // 5. Collect Lightmaps if enabled
+            // 5. Lightmaps (sampled per renderer via lightmapIndex, so streaming can measure them)
             if (streamLightmaps && LightmapSettings.lightmaps != null)
             {
                 foreach (LightmapData lm in LightmapSettings.lightmaps)
@@ -267,29 +161,19 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            // 6. Process candidate textures and apply Mipmap Streaming
-            string existingPathsStr = SessionState.GetString("SynModifiedMipStreamingTextures", "");
-            HashSet<string> allModifiedMipStreamingPaths = new HashSet<string>(
-                existingPathsStr.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
-            );
-
-            string existingMipEnabledPathsStr = SessionState.GetString("SynModifiedMipEnabledTextures", "");
-            HashSet<string> allModifiedMipEnabledPaths = new HashSet<string>(
-                existingMipEnabledPathsStr.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
-            );
+            // 6. Process candidate textures and apply Mipmap Streaming.
+            //    Every importer change is journaled to disk first so it is reverted after the build/play session,
+            //    even if the editor restarts in between.
+            var journal = SynImporterRevertJournal.Load();
+            bool enableKaiser = SynSceneOptimizerSettings.GetBool("MipStreaming_EnableKaiser", true);
 
             int modifiedImporterCount = 0;
             int modifiedAssetCount = 0;
+            var skippedByVerdict = new Dictionary<SynMipStreamingVerdict, int>();
 
             foreach (Texture2D tex in candidateTextures)
             {
                 if (tex == null) continue;
-
-                // CRITICAL SAFETY: Strictly protect Color Palettes
-                if (IsColorPaletteTexture(tex))
-                {
-                    continue;
-                }
 
                 // Check user protected textures
                 if (SynProtectionData.IsProtected(tex))
@@ -302,7 +186,10 @@ namespace Synthos.SynSceneOptimizer
                 // Handle native .asset / cached textures that have no importer
                 if (!string.IsNullOrEmpty(assetPath) && assetPath.EndsWith(".asset"))
                 {
-                    if (tex.mipmapCount > 1)
+                    // Native .asset textures in the user's project have no importer to revert, so leave them alone
+                    if (!assetPath.StartsWith(SynAssetCache.BaseCachePath)) continue;
+
+                    if (SynMipStreamingEligibility.Evaluate(tex, null) == SynMipStreamingVerdict.Eligible)
                     {
                         var so = new SerializedObject(tex);
                         var streamingProp = so.FindProperty("m_StreamingMipmaps");
@@ -337,35 +224,42 @@ namespace Synthos.SynSceneOptimizer
 
                 // Modify TextureImporter for project / package assets
                 TextureImporter importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
-                if (importer != null)
+                if (importer == null) continue;
+
+                // Never force mipmaps on; skip anything that can't benefit (see SynMipStreamingEligibility)
+                SynMipStreamingVerdict verdict = SynMipStreamingEligibility.Evaluate(tex, importer);
+                if (verdict != SynMipStreamingVerdict.Eligible)
+                {
+                    skippedByVerdict.TryGetValue(verdict, out int count);
+                    skippedByVerdict[verdict] = count + 1;
+                    continue;
+                }
+
                 {
                     bool needsReimport = false;
+                    SynImporterRevertJournal.Entry entry = journal.TryGetValue(assetPath, out var existing)
+                        ? existing
+                        : new SynImporterRevertJournal.Entry();
 
-                    // Ensure mipmaps are enabled so streaming works
-                    if (!importer.mipmapEnabled)
-                    {
-                        importer.mipmapEnabled = true;
-                        allModifiedMipEnabledPaths.Add(assetPath);
-                        needsReimport = true;
-                    }
-
-                    // Enforce Kaiser Mipmap Filter for superior sharpness in VR (stays on permanently)
-                    bool enableKaiser = SynSceneOptimizerSettings.GetBool("MipStreaming_EnableKaiser", true);
+                    // Kaiser Mipmap Filter for sharper distant textures in VR (reverted after build)
                     if (enableKaiser && importer.mipmapFilter != TextureImporterMipFilter.KaiserFilter)
                     {
+                        if (entry.OriginalMipFilter < 0) entry.OriginalMipFilter = (int)importer.mipmapFilter;
                         importer.mipmapFilter = TextureImporterMipFilter.KaiserFilter;
                         needsReimport = true;
                     }
 
                     if (!importer.streamingMipmaps)
                     {
+                        entry.StreamingWasOff = true;
                         importer.streamingMipmaps = true;
-                        allModifiedMipStreamingPaths.Add(assetPath);
                         needsReimport = true;
                     }
 
                     if (needsReimport)
                     {
+                        journal[assetPath] = entry;
+                        SynImporterRevertJournal.Save(journal);
                         try
                         {
                             importer.SaveAndReimport();
@@ -379,13 +273,11 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            if (allModifiedMipStreamingPaths.Count > 0)
+            if (skippedByVerdict.Count > 0 && SynSceneOptimizerSettings.GetBool("EnableVerboseLogging", false))
             {
-                SessionState.SetString("SynModifiedMipStreamingTextures", string.Join(";", allModifiedMipStreamingPaths));
-            }
-            if (allModifiedMipEnabledPaths.Count > 0)
-            {
-                SessionState.SetString("SynModifiedMipEnabledTextures", string.Join(";", allModifiedMipEnabledPaths));
+                var parts = new List<string>();
+                foreach (var kvp in skippedByVerdict) parts.Add($"{SynMipStreamingEligibility.Describe(kvp.Key)}: {kvp.Value}");
+                Debug.Log("[SYN SCENE OPTIMIZER] Mipmap Streaming skipped textures that would not benefit: " + string.Join(", ", parts));
             }
 
             int totalUpdated = modifiedImporterCount + modifiedAssetCount;
@@ -400,33 +292,83 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
-        private static bool IsColorPaletteTexture(Texture2D tex)
+        /// <summary>
+        /// Restores every importer setting recorded in the revert journal (plus legacy SessionState lists
+        /// written by older versions), then clears the journal.
+        /// </summary>
+        public static void RevertImporterChanges()
         {
-            if (tex == null) return false;
+            var journal = SynImporterRevertJournal.Load();
 
-            string name = tex.name.ToLowerInvariant();
-            if (name.Contains("palette") || name.Contains("colorsheet"))
+            // Legacy lists from versions that tracked changes in SessionState only
+            foreach (string path in SessionState.GetString("SynModifiedMipStreamingTextures", "").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                return true;
+                if (!journal.ContainsKey(path)) journal[path] = new SynImporterRevertJournal.Entry();
+                journal[path].StreamingWasOff = true;
             }
-
-            string path = AssetDatabase.GetAssetPath(tex);
-            if (!string.IsNullOrEmpty(path))
+            foreach (string path in SessionState.GetString("SynModifiedMipEnabledTextures", "").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                string lowerPath = path.ToLowerInvariant();
-                if (lowerPath.Contains("palette") || lowerPath.Contains("/palettes/"))
+                if (!journal.ContainsKey(path)) journal[path] = new SynImporterRevertJournal.Entry();
+                journal[path].MipmapsWereOff = true;
+            }
+            SessionState.EraseString("SynModifiedMipStreamingTextures");
+            SessionState.EraseString("SynModifiedMipEnabledTextures");
+
+            if (journal.Count == 0) return;
+
+            int revertedCount = 0;
+            AssetDatabase.StartAssetEditing();
+            try
+            {
+                foreach (var kvp in journal)
                 {
-                    return true;
+                    string path = kvp.Key;
+                    var entry = kvp.Value;
+                    if (!path.StartsWith("Packages/") && !File.Exists(path)) continue;
+
+                    try
+                    {
+                        if (!(AssetImporter.GetAtPath(path) is TextureImporter importer)) continue;
+
+                        bool changed = false;
+                        if (entry.StreamingWasOff && importer.streamingMipmaps)
+                        {
+                            importer.streamingMipmaps = false;
+                            changed = true;
+                        }
+                        if (entry.MipmapsWereOff && importer.mipmapEnabled)
+                        {
+                            importer.mipmapEnabled = false;
+                            changed = true;
+                        }
+                        if (entry.OriginalMipFilter >= 0 && (int)importer.mipmapFilter != entry.OriginalMipFilter)
+                        {
+                            importer.mipmapFilter = (TextureImporterMipFilter)entry.OriginalMipFilter;
+                            changed = true;
+                        }
+
+                        if (changed)
+                        {
+                            importer.SaveAndReimport();
+                            revertedCount++;
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning($"[SYN SCENE OPTIMIZER] Could not revert texture settings on '{path}': {e.Message}");
+                    }
                 }
             }
-
-            // Small point-filtered textures are lookup tables / palettes
-            if (tex.filterMode == FilterMode.Point && tex.width <= 128 && tex.height <= 128 && tex.mipmapCount <= 1)
+            finally
             {
-                return true;
+                AssetDatabase.StopAssetEditing();
             }
 
-            return false;
+            SynImporterRevertJournal.Clear();
+            if (revertedCount > 0)
+            {
+                Debug.Log($"[SYN SCENE OPTIMIZER] Reverted temporary import settings on {revertedCount} scene textures.");
+            }
         }
     }
 }

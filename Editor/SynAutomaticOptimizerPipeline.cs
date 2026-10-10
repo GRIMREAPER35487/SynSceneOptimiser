@@ -32,6 +32,10 @@ namespace Synthos.SynSceneOptimizer
             Debug.Log($"[SYN SCENE OPTIMIZER] Automatically optimizing scene '{scene.name}' in-place for Build.");
             SynAutomaticOptimizerPipeline.RunPipelineOnScene(scene);
 
+            // VRChat SDK asset bundle builds do not always fire IPostprocessBuildWithReport; the build blocks the
+            // editor loop, so this runs once it finishes and restores any temporary importer changes.
+            EditorApplication.delayCall += SynImporterRevertOnLoad.RevertIfIdle;
+
             // Save VRAM report
             try
             {
@@ -117,66 +121,17 @@ namespace Synthos.SynSceneOptimizer
     {
         public static void RevertMipStreamingTextures()
         {
-            string pathsStr = SessionState.GetString("SynModifiedMipStreamingTextures", "");
-            string mipEnabledPathsStr = SessionState.GetString("SynModifiedMipEnabledTextures", "");
-
-            HashSet<string> mipEnabledPaths = new HashSet<string>(
-                (mipEnabledPathsStr ?? "").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
-            );
-
-            if (string.IsNullOrEmpty(pathsStr) && mipEnabledPaths.Count == 0) return;
-
-            string[] paths = (pathsStr ?? "").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
-            int revertedCount = 0;
-
-            foreach (string path in paths)
-            {
-                if (string.IsNullOrEmpty(path)) continue;
-                if (!path.StartsWith("Packages/") && !File.Exists(path)) continue;
-
-                try
-                {
-                    TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
-                    if (importer != null)
-                    {
-                        bool changed = false;
-                        if (importer.streamingMipmaps)
-                        {
-                            importer.streamingMipmaps = false;
-                            changed = true;
-                        }
-                        if (mipEnabledPaths.Contains(path) && importer.mipmapEnabled)
-                        {
-                            importer.mipmapEnabled = false;
-                            changed = true;
-                        }
-
-                        if (changed)
-                        {
-                            importer.SaveAndReimport();
-                            revertedCount++;
-                        }
-                    }
-                }
-                catch (Exception e)
-                {
-                    Debug.LogWarning($"[SYN SCENE OPTIMIZER] Could not revert texture settings on '{path}': {e.Message}");
-                }
-            }
-
-            SessionState.SetString("SynModifiedMipStreamingTextures", "");
-            SessionState.SetString("SynModifiedMipEnabledTextures", "");
-            if (revertedCount > 0)
-            {
-                Debug.Log($"[SYN SCENE OPTIMIZER] Reverted Mipmap Streaming on {revertedCount} scene textures.");
-            }
+            SynEnableMipStreamingPass.RevertImporterChanges();
         }
 
         public static void RunPipelineOnScene(Scene scene)
         {
             SynProgressWindow progress = null;
+            var failedPasses = new List<string>();
             try
             {
+                SynProtectionData.BeginRun(scene);
+
                 if (!Application.isPlaying && !Application.isBatchMode)
                 {
                     progress = SynProgressWindow.Create("SYN SCENE OPTIMIZER");
@@ -223,10 +178,7 @@ namespace Synthos.SynSceneOptimizer
 
                         foreach (var pass in passes)
                         {
-                            string toggleKey = string.Format("Pass_{0}_Enabled", pass.Id);
-                            bool isEnabled = SynSceneOptimizerSettings.GetBool(toggleKey, true);
-
-                            if (isEnabled)
+                            if (pass.IsEnabled)
                             {
                                 activePassIndex++;
                                 float progressVal = (float)activePassIndex / Mathf.Max(1, totalPasses);
@@ -244,6 +196,7 @@ namespace Synthos.SynSceneOptimizer
                                     string errMsg = string.Format("Failed to execute pass {0}: {1}", pass.Name, e.ToString());
                                     SynPipelineCompactor.LogChange(pass.Name, "ERROR: " + errMsg);
                                     Debug.LogError("[SYN SCENE OPTIMIZER] " + errMsg);
+                                    failedPasses.Add(pass.Name);
                                 }
                             }
                         }
@@ -256,9 +209,32 @@ namespace Synthos.SynSceneOptimizer
                     // Commit final baked results and re-link references
                     SynPipelineCompactor.CommitStagingContext(scene);
                 }
+
+                // Record which cache files this run used; stale ones are removed after builds finish
+                SynCacheJanitor.RecordRun(SynAssetCache.GetSessionAssetPaths());
+                if (!Application.isPlaying)
+                {
+                    SynCacheJanitor.ScheduleCleanupAfterBuild();
+                }
+
+                if (failedPasses.Count > 0)
+                {
+                    string summary = $"{failedPasses.Count} optimization pass(es) failed partway: {string.Join(", ", failedPasses)}. " +
+                                     "Their changes may be incomplete. See the errors above for details.";
+
+                    // A half-applied pass can ship a half-optimized world (e.g. half-palettized), so builds stop by default
+                    if (!Application.isPlaying && SynSceneOptimizerSettings.GetBool("StopBuildOnPassError", true))
+                    {
+                        throw new BuildFailedException("[SYN SCENE OPTIMIZER] Build stopped: " + summary +
+                            " Fix or disable the failing pass, or turn off 'Stop Build If A Pass Fails' in the Syn Scene Optimizer window.");
+                    }
+
+                    Debug.LogError("[SYN SCENE OPTIMIZER] " + summary);
+                }
             }
             finally
             {
+                SynProtectionData.EndRun();
                 if (progress != null)
                 {
                     progress.Close();
@@ -288,7 +264,8 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            list.Sort((a, b) => a.Priority.CompareTo(b.Priority));
+            // Id breaks priority ties so pass order is the same on every machine and every run
+            list.Sort((a, b) => a.Priority != b.Priority ? a.Priority.CompareTo(b.Priority) : string.CompareOrdinal(a.Id, b.Id));
             return list;
         }
     }

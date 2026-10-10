@@ -14,6 +14,13 @@ namespace Synthos.SynSceneOptimizer
         public virtual bool IsHidden => false;
         public virtual string Tab => "Optimizers";
 
+        // Passes that permanently rewrite the user's own asset import settings are opt-in and flagged in the UI
+        public virtual bool ModifiesSourceAssets => false;
+        public virtual bool EnabledByDefault => !ModifiesSourceAssets;
+
+        public string ToggleKey => string.Format("Pass_{0}_Enabled", Id);
+        public bool IsEnabled => SynSceneOptimizerSettings.GetBool(ToggleKey, EnabledByDefault);
+
         public virtual void DrawGUI(SynSceneOptimizerSettings settings) { }
 
         public abstract void Execute(Scene scene, List<Renderer> renderers);
