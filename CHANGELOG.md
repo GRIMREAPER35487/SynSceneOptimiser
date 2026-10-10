@@ -2,7 +2,7 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
-## [Unreleased]
+## [1.1.0-beta.6] - 2026-10-10
 
 ### Added
 - **UI Optimizer pass:** stops drawing fully transparent UI graphics, turns off Raycast Target on graphics nothing can click, and flattens elements sitting less than 0.5 mm off their canvas so they batch again. Each fix has its own toggle; build, Play Mode and preview copies only.
