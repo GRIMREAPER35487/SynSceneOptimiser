@@ -18,6 +18,10 @@ namespace Synthos.SynSceneOptimizer
         public virtual bool ModifiesSourceAssets => false;
         public virtual bool EnabledByDefault => !ModifiesSourceAssets;
 
+        // Passes that change things outside the scene (project import settings, the open editor scenes) are
+        // skipped when previewing
+        public virtual bool RunInPreview => true;
+
         public string ToggleKey => string.Format("Pass_{0}_Enabled", Id);
         public bool IsEnabled => SynSceneOptimizerSettings.GetBool(ToggleKey, EnabledByDefault);
 

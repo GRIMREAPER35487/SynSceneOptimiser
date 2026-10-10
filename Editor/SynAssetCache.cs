@@ -61,6 +61,7 @@ namespace Synthos.SynSceneOptimizer
         public const string MaterialsCategory = "Materials";
         public const string AtlasesCategory = "Atlases";
         public const string OtherCategory = "Other";
+        public const string AudioCategory = "Audio";
 
         public static readonly string[] Platforms = new[] { "PC", "Android", "iOS" };
 
@@ -72,7 +73,8 @@ namespace Synthos.SynSceneOptimizer
             TexturesCategory,
             MaterialsCategory,
             AtlasesCategory,
-            OtherCategory
+            OtherCategory,
+            AudioCategory
         };
 
         // In-memory lookup cache to avoid repeated disk queries during a single session
@@ -282,7 +284,9 @@ namespace Synthos.SynSceneOptimizer
         {
             string plat = !string.IsNullOrEmpty(platform) ? platform : GetPlatformName();
             string assetId = GetAssetIdentityHash(mesh);
-            string geomSignature = $"{mesh.name}_{mesh.vertexCount}_{mesh.subMeshCount}_{mesh.triangles.Length}";
+            long indexCount = 0;
+            for (int i = 0; i < mesh.subMeshCount; i++) indexCount += mesh.GetIndexCount(i);
+            string geomSignature = $"{mesh.name}_{mesh.vertexCount}_{mesh.subMeshCount}_{indexCount}";
             return ComputeCompositeHashWithPlatform(plat, "MeshSimplifier", assetId, geomSignature, ratio.ToString("F4"), plat, vertexCount.ToString(), dynamicTiers.ToString(), extraParams);
         }
 

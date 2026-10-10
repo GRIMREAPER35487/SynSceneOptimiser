@@ -58,7 +58,7 @@ namespace Synthos.SynSceneOptimizer
                 metallicGlossMapProp = "_PackedMap",
                 metallicGlossKeyword = "",
                 emissionMapProp = "_EmissionMap",
-                emissionKeyword = "",
+                emissionKeyword = "_EMISSION_ON",
                 metallicChannel = 1,
                 smoothnessChannel = 0
             }}
@@ -133,7 +133,10 @@ namespace Synthos.SynSceneOptimizer
             "_EmissionMap", "_DetailAlbedoMap", "_DetailAlbedo",
             "_PackedMap", "_MaskMap", "_MetallicRoughnessMap",
             "_AlphaMask", "_DetailMask", "_ThicknessMap", "_Thickness", "_SubsurfaceMask",
-            "_GlossMap", "_RoughnessMap"
+            "_GlossMap", "_RoughnessMap",
+            // Mochie Standard detail / mask slots
+            "_DetailMainTex", "_DetailMetallicMap", "_DetailRoughnessMap", "_DetailOcclusionMap", "_DetailPackedMap",
+            "_EmissionMask", "_HeightMask"
         };
 
         private bool IsEditorOnly(Transform t)
@@ -336,6 +339,7 @@ namespace Synthos.SynSceneOptimizer
 
             // 4. Pre-gather ALL unique MaterialPropertiesKey across ALL groups to build ONE Master Texture
             var allSceneUniqueKeys = new List<MaterialPropertiesKey>();
+            var allSceneUniqueKeySet = new HashSet<MaterialPropertiesKey>();
             var globalKeyToPixel = new Dictionary<MaterialPropertiesKey, Vector2>();
             var allMaterialToKey = new Dictionary<Material, MaterialPropertiesKey>();
             bool anyGroupHasEmission = false;
@@ -368,28 +372,14 @@ namespace Synthos.SynSceneOptimizer
 
                     if (hasLayout)
                     {
-                        if (mat.HasProperty(layout.metallicProp)) metallic = mat.GetFloat(layout.metallicProp);
-                        if (mat.HasProperty(layout.smoothnessProp)) smoothness = mat.GetFloat(layout.smoothnessProp);
+                        ReadMetallicSmoothness(mat, layout, out metallic, out smoothness);
 
-                        bool isEmissiveGI = (mat.globalIlluminationFlags & MaterialGlobalIlluminationFlags.EmissiveIsBlack) == 0 &&
-                                            (mat.globalIlluminationFlags != MaterialGlobalIlluminationFlags.None);
-                        bool keywordEnabled = mat.IsKeywordEnabled("_EMISSION") || 
-                                             mat.IsKeywordEnabled("_EMISSIVE") ||
-                                             mat.IsKeywordEnabled("_EMISSION_ON") ||
-                                             (!string.IsNullOrEmpty(layout.emissionKeyword) && mat.IsKeywordEnabled(layout.emissionKeyword));
-                        string matNameLower = mat.name.ToLower();
-                        string sNameLower = mat.shader.name.ToLower();
-                        bool isExplicitLight = matNameLower.Contains("bulb") || matNameLower.Contains("candle") || matNameLower.Contains("flame") ||
-                                               matNameLower.Contains("light") || matNameLower.Contains("neon") || matNameLower.Contains("glow") ||
-                                               sNameLower.Contains("emissive") || sNameLower.Contains("glow");
-
-                        if ((isEmissiveGI || keywordEnabled || isExplicitLight) && mat.HasProperty(layout.emissionProp))
+                        // The shader keyword is what actually turns emission on; names and GI flags are not
+                        if (IsEmissionEnabled(mat, layout) && mat.HasProperty(layout.emissionProp))
                         {
-                            emission = mat.GetColor(layout.emissionProp);
-                            if (mat.HasProperty("_EmissionStrength"))
-                            {
-                                emission *= mat.GetFloat("_EmissionStrength");
-                            }
+                            // Stored sRGB-encoded so the palette's sRGB emission texture samples back to the original
+                            // linear emission (with palette emission color white and strength 1)
+                            emission = GetEffectiveEmissionLinear(mat).gamma;
                         }
                     }
 
@@ -405,7 +395,7 @@ namespace Synthos.SynSceneOptimizer
                     };
 
                     allMaterialToKey[mat] = key;
-                    if (!allSceneUniqueKeys.Contains(key))
+                    if (allSceneUniqueKeySet.Add(key))
                     {
                         allSceneUniqueKeys.Add(key);
                     }
@@ -435,7 +425,7 @@ namespace Synthos.SynSceneOptimizer
             // Build Master Hash incorporating all sorted keys to guarantee cache freshness if any scene color shifts
             var masterHashTokens = new List<string>
             {
-                "MasterPalette_v8_asset",
+                "MasterPalette_v9_asset", // v9: neutral G/B in metallic map, shader-accurate metallic/smoothness/emission
                 QualitySettings.activeColorSpace.ToString(),
                 masterGridSize.ToString(),
                 allSceneUniqueKeys.Count.ToString(),
@@ -511,8 +501,9 @@ namespace Synthos.SynSceneOptimizer
                     albedoCol.a = Mathf.Clamp01(k.AlbedoColor.a);
                     masterAlbedo.SetPixel(x, y, debugColors ? Color.yellow : albedoCol);
 
-                    // Standard Unity PBR MetallicGloss: R = Metallic, A = Smoothness (raw linear data masks)
-                    Color mgColor = new Color(Mathf.Clamp01(k.Metallic), 0, 0, Mathf.Clamp01(k.Smoothness));
+                    // R = Metallic, A = Smoothness (Unity Standard MetallicGloss layout). G/B stay white so Mochie's
+                    // packed occlusion channel reads 1 (no darkening); Mochie is pointed at R/A in ConfigureMochiePalette
+                    Color mgColor = new Color(Mathf.Clamp01(k.Metallic), 1, 1, Mathf.Clamp01(k.Smoothness));
                     masterMetallic.SetPixel(x, y, mgColor);
 
                     if (masterEmission != null)
@@ -685,7 +676,127 @@ namespace Synthos.SynSceneOptimizer
                     if (paletteMat.HasProperty("_EmissionStrength")) paletteMat.SetFloat("_EmissionStrength", 0f);
                     if (!string.IsNullOrEmpty(layout.emissionKeyword)) paletteMat.DisableKeyword(layout.emissionKeyword);
                 }
+
+                if (IsMochieStandard(paletteMat))
+                {
+                    ConfigureMochiePalette(paletteMat, metallicTex != null, emissionTex != null);
+                }
             }
+        }
+
+        private static bool IsMochieStandard(Material mat)
+        {
+            return mat != null && mat.shader != null && mat.shader.name.StartsWith("Mochie/Standard");
+        }
+
+        /// <summary>
+        /// Points a Mochie Standard (/Lite/Mobile) palette material at the shared palette textures. Mochie only reads
+        /// the packed map with _WORKFLOW_PACKED_ON, picks channels via _*Channel, and derives roughness as
+        /// abs(_SmoothnessToggle - value). Everything that would sample the palette differently from plain UV0
+        /// (triplanar, stochastic, UV sets, parallax, emission masks) is reset to defaults.
+        /// </summary>
+        private static void ConfigureMochiePalette(Material mat, bool hasMetallicMap, bool hasEmission)
+        {
+            void SetIfPresent(string prop, float value)
+            {
+                if (mat.HasProperty(prop)) mat.SetFloat(prop, value);
+            }
+
+            if (hasMetallicMap)
+            {
+                SetIfPresent("_PrimaryWorkflow", 1);
+                mat.EnableKeyword("_WORKFLOW_PACKED_ON");
+                SetIfPresent("_MetallicChannel", 0);   // R
+                SetIfPresent("_RoughnessChannel", 3);  // A, read as smoothness below
+                SetIfPresent("_OcclusionChannel", 1);  // G (white)
+                SetIfPresent("_HeightChannel", 2);     // B (unused, packed height off)
+                SetIfPresent("_SmoothnessToggle", 1);
+                SetIfPresent("_PackedMetallicStrength", 1);
+                SetIfPresent("_PackedRoughnessStrength", 1);
+                SetIfPresent("_PackedOcclusionStrength", 0);
+                SetIfPresent("_PackedHeight", 0);
+            }
+
+            // Sample the palette with plain UV0 lookups
+            SetIfPresent("_PrimarySampleMode", 0);
+            mat.DisableKeyword("_STOCHASTIC_ON");
+            mat.DisableKeyword("_TRIPLANAR_ON");
+            mat.DisableKeyword("_SUPERSAMPLING_ON");
+            SetIfPresent("_UVMainSet", 0);
+            SetIfPresent("_UVMainSwizzle", 0);
+            SetIfPresent("_UVMainRotation", 0);
+            if (mat.HasProperty("_UVMainScroll")) mat.SetVector("_UVMainScroll", Vector4.zero);
+            mat.DisableKeyword("_PARALLAX_ON");
+
+            if (hasEmission)
+            {
+                if (mat.HasProperty("_EmissionMask")) mat.SetTexture("_EmissionMask", null);
+                SetIfPresent("_EmissionPulseWave", 0);
+                mat.globalIlluminationFlags &= ~MaterialGlobalIlluminationFlags.EmissiveIsBlack;
+            }
+            else
+            {
+                mat.DisableKeyword("_AUDIOLINK_ON");
+                mat.DisableKeyword("_AUDIOLINK_META_ON");
+            }
+        }
+
+        /// <summary>
+        /// Metallic and smoothness exactly as the shader computes them for an untextured material.
+        /// </summary>
+        private static void ReadMetallicSmoothness(Material mat, ShaderPropertyLayout layout, out float metallic, out float smoothness)
+        {
+            metallic = 0f;
+            smoothness = 0f;
+
+            if (IsMochieStandard(mat))
+            {
+                // Packed workflow with no map samples the default white texture, so the strengths are the values
+                bool packed = mat.IsKeywordEnabled("_WORKFLOW_PACKED_ON");
+                metallic = GetFloatOr(mat, packed ? "_PackedMetallicStrength" : "_MetallicStrength", packed ? 1f : 0f);
+                float roughnessValue = GetFloatOr(mat, packed ? "_PackedRoughnessStrength" : "_RoughnessStrength", 1f);
+                float roughness = Mathf.Abs(GetFloatOr(mat, "_SmoothnessToggle", 0f) - roughnessValue);
+                smoothness = 1f - roughness;
+                return;
+            }
+
+            if (mat.HasProperty(layout.metallicProp)) metallic = mat.GetFloat(layout.metallicProp);
+            if (mat.HasProperty(layout.smoothnessProp))
+            {
+                float value = mat.GetFloat(layout.smoothnessProp);
+                smoothness = layout.invertSmoothness ? 1f - value : value;
+            }
+        }
+
+        private static float GetFloatOr(Material mat, string prop, float fallback)
+        {
+            return mat.HasProperty(prop) ? mat.GetFloat(prop) : fallback;
+        }
+
+        private static bool IsEmissionEnabled(Material mat, ShaderPropertyLayout layout)
+        {
+            return mat.IsKeywordEnabled("_EMISSION") ||
+                   mat.IsKeywordEnabled("_EMISSIVE") ||
+                   mat.IsKeywordEnabled("_EMISSION_ON") ||
+                   (!string.IsNullOrEmpty(layout.emissionKeyword) && mat.IsKeywordEnabled(layout.emissionKeyword));
+        }
+
+        /// <summary>
+        /// Emission in linear space as the shader outputs it (untextured). Mochie raises the color to 2.2 on top of
+        /// Unity's own gamma-to-linear conversion and multiplies by _EmissionStrength.
+        /// </summary>
+        private static Color GetEffectiveEmissionLinear(Material mat)
+        {
+            if (!mat.HasProperty("_EmissionColor")) return Color.black;
+            Color c = mat.GetColor("_EmissionColor");
+            Color linear = QualitySettings.activeColorSpace == ColorSpace.Linear ? c.linear : c;
+            float strength = GetFloatOr(mat, "_EmissionStrength", 1f);
+
+            if (IsMochieStandard(mat))
+            {
+                linear = new Color(Mathf.Pow(linear.r, 2.2f), Mathf.Pow(linear.g, 2.2f), Mathf.Pow(linear.b, 2.2f), linear.a);
+            }
+            return new Color(linear.r * strength, linear.g * strength, linear.b * strength, linear.a);
         }
 
         private Material CreatePaletteMaterial(Material baseMat, Texture2D albedoTex, Texture2D metallicTex, Texture2D emissionTex, ShaderPropertyLayout layout, bool hasLayout, string suffix)
@@ -922,9 +1033,8 @@ namespace Synthos.SynSceneOptimizer
             // Skip materials with HDR emission (> 1.0) to prevent clamping their glow in 8-bit palette textures
             if (mat.HasProperty("_EmissionColor"))
             {
-                Color em = mat.GetColor("_EmissionColor");
-                float emStrength = mat.HasProperty("_EmissionStrength") ? mat.GetFloat("_EmissionStrength") : 1.0f;
-                if ((em.r * emStrength > 1.001f || em.g * emStrength > 1.001f || em.b * emStrength > 1.001f) &&
+                Color em = GetEffectiveEmissionLinear(mat);
+                if ((em.r > 1.001f || em.g > 1.001f || em.b > 1.001f) &&
                     (mat.IsKeywordEnabled("_EMISSION") || mat.IsKeywordEnabled("_EMISSIVE") || mat.IsKeywordEnabled("_EMISSION_ON")))
                 {
                     reason = "Material has HDR emission (> 1.0) which cannot be preserved in an 8-bit texture atlas";
@@ -1122,22 +1232,22 @@ namespace Synthos.SynSceneOptimizer
             return $"{(hasMetallic ? "M" : "")}_{(hasEmission ? "E" : "")}";
         }
 
-        private static readonly HashSet<string> DynamicShaderKeywords = new HashSet<string>
+        // Keywords the palette material sets itself, so they may differ between merged materials
+        private static readonly HashSet<string> PaletteNormalizedKeywords = new HashSet<string>
         {
-            "_EMISSION", "_METALLICGLOSSMAP", "_METALLICSPECGLOSSMAP", "_SPECGLOSSMAP",
-            "_SPECULAR_HIGHLIGHTS_ON", "_SPECULAR_HIGHLIGHTS_OFF",
-            "_GLOSSYREFLECTIONS_OFF", "_GLOSSYREFLECTIONS_ON",
-            "_NORMALMAP", "_DETAIL_MULX2", "_PARALLAXMAP", "_OCCLUSIONMAP"
+            "_EMISSION", "_EMISSIVE", "_EMISSION_ON", "_METALLICGLOSSMAP",
+            "_WORKFLOW_PACKED_ON", "_STOCHASTIC_ON", "_TRIPLANAR_ON", "_SUPERSAMPLING_ON",
+            "_PARALLAX_ON", "_AUDIOLINK_ON", "_AUDIOLINK_META_ON"
         };
 
-        private static readonly HashSet<string> StandardBakeableProperties = new HashSet<string>
+        private static bool HaveSameShaderFeatures(Material a, Material b)
         {
-            "_Color", "_BaseColor", "_MainColor", "_ColorTint",
-            "_Metallic", "_Glossiness", "_GlossMapScale", "_Smoothness",
-            "_MetallicStrength", "_RoughnessStrength",
-            "_PackedRoughnessStrength", "_PackedMetallicStrength", "_PackedOcclusionStrength",
-            "_EmissionColor", "_EmissionStrength"
-        };
+            var featuresA = new HashSet<string>(a.shaderKeywords);
+            var featuresB = new HashSet<string>(b.shaderKeywords);
+            featuresA.ExceptWith(PaletteNormalizedKeywords);
+            featuresB.ExceptWith(PaletteNormalizedKeywords);
+            return featuresA.SetEquals(featuresB);
+        }
 
         private bool AreMaterialsCompatible(Material a, Material b, bool extremeMode)
         {
@@ -1168,6 +1278,10 @@ namespace Synthos.SynSceneOptimizer
             }
 
             if (GetQueueCategory(a) != GetQueueCategory(b)) return false;
+
+            // Merged materials become copies of the group's first material, so features like reflections,
+            // specular highlights, rain, Bakery mode or LTCGI must match or they'd be added/lost
+            if (!HaveSameShaderFeatures(a, b)) return false;
 
             // Compare Critical Render Pipeline properties (Cull / Double-Sided)
             if (a.HasProperty("_Cull") && b.HasProperty("_Cull"))

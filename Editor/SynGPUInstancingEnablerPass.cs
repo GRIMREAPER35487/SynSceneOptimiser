@@ -50,9 +50,11 @@ namespace Synthos.SynSceneOptimizer
             foreach (var kvp in matToRenderers)
             {
                 Material mat = kvp.Key;
-                List<Renderer> usingRenderers = kvp.Value;
 
-                if (usingRenderers.Count < minInstances) continue;
+                // Instancing only merges renderers drawing the same mesh with the same material, so only count
+                // renderers in mesh groups big enough to form an instanced batch
+                List<Renderer> usingRenderers = GetInstanceableRenderers(kvp.Value, minInstances);
+                if (usingRenderers.Count == 0) continue;
 
                 // If already enabled on the material asset, skip staging
                 if (mat.enableInstancing) continue;
@@ -74,12 +76,7 @@ namespace Synthos.SynSceneOptimizer
                         materialsQueuedCount++;
                     }
                 }
-                else
-                {
-                    // Fallback if staging context is inactive: set in memory
-                    mat.enableInstancing = true;
-                    materialsQueuedCount++;
-                }
+                // Without a staging context there is no copy to change; the material asset itself is never edited
 
                 // 3. Optionally disable Static Batching on instanced static GameObjects
                 if (disableStaticBatching)
@@ -187,6 +184,33 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
             return filters;
+        }
+
+        /// <summary>
+        /// Renderers from <paramref name="renderers"/> whose mesh is shared by at least <paramref name="minInstances"/>
+        /// of them (the renderers that can actually end up in one instanced draw).
+        /// </summary>
+        private static List<Renderer> GetInstanceableRenderers(List<Renderer> renderers, int minInstances)
+        {
+            var byMesh = new Dictionary<Mesh, List<Renderer>>();
+            foreach (Renderer r in renderers)
+            {
+                Mesh mesh = r is SkinnedMeshRenderer smr ? smr.sharedMesh : r.GetComponent<MeshFilter>()?.sharedMesh;
+                if (mesh == null) continue;
+                if (!byMesh.TryGetValue(mesh, out var list))
+                {
+                    list = new List<Renderer>();
+                    byMesh[mesh] = list;
+                }
+                list.Add(r);
+            }
+
+            var result = new List<Renderer>();
+            foreach (var list in byMesh.Values)
+            {
+                if (list.Count >= minInstances) result.AddRange(list);
+            }
+            return result;
         }
 
         private static Dictionary<Material, List<Renderer>> GatherMaterialUsages(

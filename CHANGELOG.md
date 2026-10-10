@@ -1,0 +1,94 @@
+# Changelog
+
+All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
+
+## [1.1.0-beta.2] - 2026-10-09
+
+### Added
+- **Preview (Dry Run):** runs every enabled pass on a temporary copy of the open scene and shows what would change, with VRAM before and after. Your scene is not modified.
+- **Optimization report** (Window → Synthos → Last Optimization Report): status, time and notes for every pass of the last build, Play Mode run or preview. Optional "Show Report After Each Run".
+- **Cancel** button on the progress bar. Cancelling stops a build; in Play Mode the remaining passes are skipped.
+- **Presets:** Balanced (Default), Quality and Quest Aggressive, plus Reset All.
+- **Reset Audio Import Settings** window to put clips back to Unity's defaults (undoes changes made by versions before 1.1).
+- **VRAM Analyzer "Estimate Memory For"**: exact numbers for the active build target, or PC/Quest estimates from each texture's import settings.
+
+### Changed
+- **Settings are now per project** (`ProjectSettings/SynSceneOptimizer.json`). Values previously set in the machine-wide editor preferences are copied in automatically the first time a project opens.
+- **Audio Clip Optimizer is non-destructive:** it optimizes the clips the scene uses (AudioSources and Udon/UdonSharp references) as cached copies, chooses settings by clip length (streamed Vorbis / compressed Vorbis / ADPCM), and points scene references at the copies. The "Entire Project" scan mode was removed.
+- Mesh colliders that shared a renderer's mesh now follow it to the deduplicated, memory-optimized or simplified mesh.
+- The mesh simplifier skips meshes inside LOD groups and non-triangle meshes.
+- GPU Instancing Enabler only enables instancing where renderers share both mesh and material, and never edits material assets during builds.
+- Texture analysis reads textures back at up to 1024 px in small batches and caches scores, so repeat builds skip unchanged textures.
+- Textures still used outside optimized renderers (UI, particles, protected objects, Udon, skybox, animated material swaps) are no longer downscaled, so both versions never ship.
+- Baked-lighting detection uses import type, the scene's lightmap list and lighting output folders instead of broad name matching.
+- All menu items live under Window → Synthos.
+- `package.json`: removed the Unity Package Manager `dependencies` block (VPM uses `vpmDependencies`), added license, documentation and changelog links.
+
+### Fixed
+- **Merged Mochie Standard materials rendered fully metallic.** The palette pass now enables Mochie's packed workflow, uses matching texture channels, reads metallic/roughness/emission the way Mochie computes them, resets triplanar/stochastic/UV-set sampling, and only merges materials with the same shader features.
+- Protected objects could still receive optimized materials and meshes when changes were applied.
+- The mesh memory pass no longer runs a slow asset unload on every run when it created nothing.
+- Faster video-player detection and palette building in large scenes.
+
+### Removed
+- `SynDynamicPropertyBlock` runtime component (never used; VRChat strips custom scripts from worlds) and the empty Runtime assembly.
+
+## [1.1.0-beta.1] - 2026-10-09
+
+### Changed
+- **Texture downscaling keeps compression:** downscaled textures are importer-backed copies re-imported by Unity at a lower max size, keeping the original format, color space, normal-map encoding, mips and sampler state. Previously they were saved uncompressed and often increased VRAM.
+- **Mip streaming** only applies to textures that benefit, never forces mipmaps on, and journals every import change to `Library/` so it is reverted after builds, Play Mode and editor restarts. New Repair Mip Streaming Changes window for projects changed by older versions.
+- Audio Clip Optimizer became opt-in and is flagged as modifying project assets.
+- Protection settings moved out of the package into `Assets/SynSceneOptimizer/`.
+- Unused cache entries are removed after builds (default 30 days).
+- Builds stop if a pass fails partway (can be turned off).
+- Only the optimizer's own cache assets are saved during runs.
+- Deduplication only removes static batching from same-mesh/same-material groups large enough to instance.
+- Mirror pass works with either reflect-layers field name and never strips Player/PlayerLocal/MirrorReflection.
+- Bakery pass only re-enables probes Bakery itself disabled.
+- EditorOnly pruner keeps renderers that scripts, Udon or animators may fill at runtime.
+
+### Fixed
+- Normal maps corrupted when downscaled; alpha treated as transparency on smoothness/mask maps.
+- Mesh Skip/Preserve lists stopped matching after other passes swapped meshes; simplifier smeared baked lightmaps; UV3 z/w and black vertex-color masks were wiped; deduplication ignored blendshapes and UV4-7.
+- Stale cache results after changing settings; auto-tune overwrote tier sliders.
+- Palette materials never received later staged changes (e.g. Quest shader fallback); palette metallic texture was sRGB.
+- Probe-lit statics lost light probes; Ghost Texture Purger removed nothing.
+- Protection did not apply to the build copy of the scene.
+- Pass order was not deterministic.
+
+## [1.0.9] - 2026-10-09
+### Fixed
+- Adopted VRCFury build hook order and non-destructive asset persistence.
+
+## [1.0.8] - 2026-10-09
+### Fixed
+- Restored native `.asset` texture storage and raw linear colors for the palette pass.
+
+## [1.0.7] - 2026-10-08
+### Fixed
+- Color palette sRGB/linear color fidelity, UV tiling offsets and texture import settings.
+
+## [1.0.6] - 2026-10-08
+### Fixed
+- First fix for material scrambling and cache collisions.
+### Changed
+- Release workflow triggers the VPM listing rebuild; README expanded.
+
+## [1.0.5] - 2026-10-05
+- Removed the Frame Exporter button from the optimizer window.
+
+## [1.0.4] - 2026-10-05
+- Enabled the Open Frame Exporter button; added credits for avatar-compressor and Meshia.
+
+## [1.0.3] - 2026-10-05
+- Fixed a missing `using System.IO` in SynProtectionData.
+
+## [1.0.2] - 2026-10-05
+- Added `legacyPackages` entry for `com.ramtype0.meshia.mesh-simplification`.
+
+## [1.0.1] - 2026-10-05
+- Package type set to world with a `com.vrchat.worlds` dependency.
+
+## [1.0.0] - 2026-10-05
+- Initial release.

@@ -20,6 +20,7 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Enables Mipmap Streaming on all textures referenced in the scene (meshes, particles, UI, terrain, skybox, and generated cache) while protecting Color Palettes.";
         public override string Category => "Texture Optimization";
         public override int Priority => 95;
+        public override bool RunInPreview => false; // Temporarily edits project import settings
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {

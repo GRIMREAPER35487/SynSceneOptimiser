@@ -8,210 +8,293 @@ using UnityEngine.SceneManagement;
 namespace Synthos.SynSceneOptimizer
 {
     /// <summary>
-    /// Optimization pass that automatically configures AudioClip compression and load settings based on size.
-    /// Ports and integrates the logic from the project's manual AudioAutoOptimizer.
+    /// Optimizes the audio clips a scene uses without touching the user's files: each clip that needs different
+    /// import settings is copied (with its import settings) into the cache, re-imported there with settings chosen
+    /// from its length, and every scene reference (AudioSources, Udon/UdonSharp fields) is pointed at the copy.
     /// </summary>
     public class SynAudioOptimizerPass : SynOptimizationPass
     {
         public override string Id => "synthos.audio_optimizer";
         public override string Name => "Audio Clip Optimizer";
-        public override string Description => "Optimizes AudioClip import settings (Vorbis/Streaming for loops, ADPCM for short hits) to reduce memory usage and build size.";
+        public override string Description => "Picks compression and load settings for the scene's audio clips from their length (streamed Vorbis for music, compressed Vorbis for medium clips, ADPCM for short effects). Works on cached copies, so your audio files are never modified.";
 
         public override int Priority => 30; // Run early-mid
         public override string Category => "Audio";
-        public override bool ModifiesSourceAssets => true;
+
+        private class PendingAudioCopy
+        {
+            public AudioClip Source;
+            public string CopyPath;
+            public AudioImporterSampleSettings Settings;
+        }
 
         public override void Execute(Scene scene, List<Renderer> renderers)
         {
-            // Import settings don't affect a Play Mode test session; only touch the user's clips for real builds
-            if (Application.isPlaying) return;
-
-            string scanMode = SynSceneOptimizerSettings.GetString("Audio_ScanMode", "SceneOnly");
             float vorbisQuality = SynSceneOptimizerSettings.GetFloat("Audio_VorbisQuality", 0.7f);
+            float streamAbove = SynSceneOptimizerSettings.GetFloat("Audio_StreamAboveSeconds", 30f);
+            float decompressBelow = SynSceneOptimizerSettings.GetFloat("Audio_DecompressBelowSeconds", 3f);
             bool logOptimized = SynSceneOptimizerSettings.GetBool("Audio_LogOptimized", true);
-            bool verbose = SynSceneOptimizerSettings.GetBool("EnableVerboseLogging", false);
 
-            var clipsToOptimize = new HashSet<AudioClip>();
+            // 1. Every clip the scene can play: AudioSources plus clips referenced by scripts (Udon, UdonSharp, ...)
+            var clips = new HashSet<AudioClip>();
+            ForEachClipReference(scene, (clip, assign) => clips.Add(clip));
+            if (clips.Count == 0) return;
 
-            if (scanMode == "EntireProject")
+            string importerPlatform = GetImporterPlatformName(SynAssetCache.GetCurrentTargetPlatform());
+            var replacements = new Dictionary<AudioClip, AudioClip>();
+            var pending = new List<PendingAudioCopy>();
+            int alreadyOptimal = 0;
+
+            foreach (AudioClip clip in clips)
             {
-                // Scan all audio clips in the project asset database
-                string[] guids = AssetDatabase.FindAssets("t:AudioClip");
-                foreach (string guid in guids)
+                string path = AssetDatabase.GetAssetPath(clip);
+                if (string.IsNullOrEmpty(path) || path.StartsWith(SynAssetCache.BaseCachePath)) continue;
+                if (!(AssetImporter.GetAtPath(path) is AudioImporter importer)) continue;
+
+                AudioImporterSampleSettings current = importer.ContainsSampleSettingsOverride(importerPlatform)
+                    ? importer.GetOverrideSampleSettings(importerPlatform)
+                    : importer.defaultSampleSettings;
+                AudioImporterSampleSettings target = ChooseSettings(current, clip.length, vorbisQuality, streamAbove, decompressBelow);
+
+                if (AreSettingsEqual(current, target))
                 {
-                    string path = AssetDatabase.GUIDToAssetPath(guid);
-                    var clip = AssetDatabase.LoadAssetAtPath<AudioClip>(path);
-                    if (clip != null)
-                    {
-                        clipsToOptimize.Add(clip);
-                    }
+                    alreadyOptimal++;
+                    continue;
                 }
+
+                string hash = SynAssetCache.ComputeCompositeHash(
+                    "AudioOpt_v1",
+                    SynAssetCache.GetAssetIdentityHash(clip),
+                    target.loadType.ToString(),
+                    target.compressionFormat.ToString(),
+                    target.quality.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                    target.sampleRateSetting.ToString(),
+                    target.preloadAudioData.ToString());
+
+                if (SynAssetCache.TryGetCachedAsset<AudioClip>(SynAssetCache.AudioCategory, hash, out AudioClip cached))
+                {
+                    replacements[clip] = cached;
+                    continue;
+                }
+
+                pending.Add(new PendingAudioCopy
+                {
+                    Source = clip,
+                    CopyPath = SynAssetCache.GetAssetPath(SynAssetCache.AudioCategory, hash, clip.name, Path.GetExtension(path)),
+                    Settings = target
+                });
+            }
+
+            if (pending.Count > 0)
+            {
+                ImportOptimizedCopies(pending, importerPlatform, replacements);
+            }
+
+            if (replacements.Count == 0) return;
+
+            // 2. Point every scene reference at the optimized copies
+            int referencesUpdated = 0;
+            ForEachClipReference(scene, (clip, assign) =>
+            {
+                if (replacements.TryGetValue(clip, out AudioClip copy))
+                {
+                    assign(copy);
+                    referencesUpdated++;
+                }
+            });
+
+            if (logOptimized)
+            {
+                foreach (var kvp in replacements)
+                {
+                    var importer = AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(kvp.Value)) as AudioImporter;
+                    var s = importer != null ? importer.defaultSampleSettings : default;
+                    Debug.Log($"[AudioOptimizer] <b>{kvp.Key.name}</b> ({kvp.Key.length:F1}s) -> {s.compressionFormat}, {s.loadType}");
+                }
+            }
+
+            string msg = $"Optimized {replacements.Count} audio clips ({alreadyOptimal} already optimal) and updated {referencesUpdated} scene references. Source files unchanged.";
+            Debug.Log($"[SYN SCENE OPTIMIZER] Audio Optimizer: {msg}");
+            SynPipelineCompactor.LogChange("Audio Optimizer", msg);
+        }
+
+        /// <summary>
+        /// Length-based settings. Long clips (music, ambience) stream from disk so they never sit in RAM; medium
+        /// clips stay Vorbis-compressed in memory; short effects are ADPCM decompressed on load for instant playback.
+        /// </summary>
+        private static AudioImporterSampleSettings ChooseSettings(AudioImporterSampleSettings current, float length, float vorbisQuality, float streamAbove, float decompressBelow)
+        {
+            var s = current;
+            s.sampleRateSetting = AudioSampleRateSetting.OptimizeSampleRate;
+
+            if (length >= streamAbove)
+            {
+                s.loadType = AudioClipLoadType.Streaming;
+                s.compressionFormat = AudioCompressionFormat.Vorbis;
+                s.quality = vorbisQuality;
+                s.preloadAudioData = false;
+            }
+            else if (length >= decompressBelow)
+            {
+                s.loadType = AudioClipLoadType.CompressedInMemory;
+                s.compressionFormat = AudioCompressionFormat.Vorbis;
+                s.quality = vorbisQuality;
+                s.preloadAudioData = true;
             }
             else
             {
-                // Scan only audio clips referenced by AudioSources in the scene
-                var rootObjects = scene.GetRootGameObjects();
-                foreach (var root in rootObjects)
-                {
-                    var sources = root.GetComponentsInChildren<AudioSource>(true);
-                    foreach (var source in sources)
-                    {
-                        if (source == null || SynProtectionData.IsProtected(source.gameObject))
-                        {
-                            continue;
-                        }
-                        if (source.clip != null)
-                        {
-                            clipsToOptimize.Add(source.clip);
-                        }
-                    }
-                }
+                s.loadType = AudioClipLoadType.DecompressOnLoad;
+                s.compressionFormat = AudioCompressionFormat.ADPCM;
+                s.preloadAudioData = true;
             }
-
-            int optimizedCount = 0;
-            int skippedCount = 0;
-            int errorCount = 0;
-
-            foreach (var clip in clipsToOptimize)
-            {
-                string path = AssetDatabase.GetAssetPath(clip);
-                if (string.IsNullOrEmpty(path) || path.StartsWith("Packages/") || path.StartsWith("Library/"))
-                {
-                    continue; // Skip packages and built-in clips
-                }
-
-                var importer = AssetImporter.GetAtPath(path) as AudioImporter;
-                if (importer == null)
-                {
-                    errorCount++;
-                    continue;
-                }
-
-                // Get file size
-                long fileSize = 0;
-                try
-                {
-                    FileInfo fileInfo = new FileInfo(Path.Combine(Application.dataPath, "..", path));
-                    if (fileInfo.Exists)
-                    {
-                        fileSize = fileInfo.Length;
-                    }
-                }
-                catch (Exception e)
-                {
-                    if (verbose)
-                    {
-                        Debug.LogWarning($"[AudioOptimizer] Failed to get file size for {clip.name}: {e.Message}");
-                    }
-                    continue;
-                }
-
-                AudioImporterSampleSettings originalSettings = importer.defaultSampleSettings;
-                AudioImporterSampleSettings newSettings = originalSettings;
-
-                // Determine target settings based on size
-                // LEVEL 1: Big Loops (> 1MB) - Vorbis + Streaming
-                if (fileSize > 1024 * 1024)
-                {
-                    newSettings.loadType = AudioClipLoadType.Streaming;
-                    newSettings.compressionFormat = AudioCompressionFormat.Vorbis;
-                    newSettings.quality = vorbisQuality;
-                    newSettings.sampleRateSetting = AudioSampleRateSetting.OverrideSampleRate;
-                    newSettings.sampleRateOverride = 44100;
-                    newSettings.preloadAudioData = false;
-                }
-                // LEVEL 2: Interaction Sounds (100KB - 1MB) - ADPCM + Compressed In Memory
-                else if (fileSize > 100 * 1024)
-                {
-                    newSettings.loadType = AudioClipLoadType.CompressedInMemory;
-                    newSettings.compressionFormat = AudioCompressionFormat.ADPCM;
-                    newSettings.preloadAudioData = false;
-                }
-                // LEVEL 3: Quick Hits (< 100KB) - ADPCM + Decompress On Load
-                else
-                {
-                    newSettings.loadType = AudioClipLoadType.DecompressOnLoad;
-                    newSettings.compressionFormat = AudioCompressionFormat.ADPCM;
-                    newSettings.preloadAudioData = true;
-                }
-
-                // Check if changes are needed to avoid redundant re-imports
-                if (AreSettingsEqual(originalSettings, newSettings))
-                {
-                    skippedCount++;
-                    continue;
-                }
-
-                // Apply changes and reimport
-                try
-                {
-                    importer.defaultSampleSettings = newSettings;
-                    importer.SaveAndReimport();
-                    optimizedCount++;
-
-                    if (logOptimized)
-                    {
-                        string sizeText = FormatBytes(fileSize);
-                        Debug.Log($"[AudioOptimizer] Optimized clip <b>{clip.name}</b> ({sizeText}). LoadType: {newSettings.loadType}, Format: {newSettings.compressionFormat}, Preload: {newSettings.preloadAudioData}");
-                    }
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError($"[AudioOptimizer] Failed to save settings for clip {clip.name}: {e.Message}");
-                    errorCount++;
-                }
-            }
-
-            if (optimizedCount > 0)
-            {
-                SynPipelineCompactor.LogChange(
-                    "Audio Optimizer",
-                    string.Format("Optimized {0} clips ({1} already optimized, {2} errors).", optimizedCount, skippedCount, errorCount)
-                );
-            }
+            return s;
         }
 
-        private bool AreSettingsEqual(AudioImporterSampleSettings a, AudioImporterSampleSettings b)
+        private static bool AreSettingsEqual(AudioImporterSampleSettings a, AudioImporterSampleSettings b)
         {
             return a.loadType == b.loadType &&
                    a.compressionFormat == b.compressionFormat &&
-                   Mathf.Approximately(a.quality, b.quality) &&
+                   (a.compressionFormat != AudioCompressionFormat.Vorbis || Mathf.Approximately(a.quality, b.quality)) &&
                    a.sampleRateSetting == b.sampleRateSetting &&
-                   a.sampleRateOverride == b.sampleRateOverride &&
                    a.preloadAudioData == b.preloadAudioData;
         }
 
-        private string FormatBytes(long bytes)
+        /// <summary>
+        /// Copies the source clips (with their import settings) into the cache, applies the chosen settings and
+        /// re-imports them. Runs outside the pipeline's StartAssetEditing batch so the copies load immediately.
+        /// </summary>
+        private static void ImportOptimizedCopies(List<PendingAudioCopy> pending, string importerPlatform, Dictionary<AudioClip, AudioClip> replacements)
         {
-            if (bytes >= 1024 * 1024) return $"{bytes / 1024.0 / 1024.0:F1} MB";
-            if (bytes >= 1024) return $"{bytes / 1024.0:F1} KB";
-            return $"{bytes} B";
+            using (SynAssetDatabaseScope.Suspend())
+            {
+                string folder = SynAssetCache.GetCategoryPath(SynAssetCache.AudioCategory).TrimEnd('/');
+                if (!AssetDatabase.IsValidFolder(folder))
+                {
+                    AssetDatabase.Refresh();
+                }
+
+                var copied = new List<PendingAudioCopy>();
+                AssetDatabase.StartAssetEditing();
+                try
+                {
+                    foreach (var p in pending)
+                    {
+                        string sourcePath = AssetDatabase.GetAssetPath(p.Source);
+                        if (File.Exists(p.CopyPath) || AssetDatabase.CopyAsset(sourcePath, p.CopyPath))
+                        {
+                            copied.Add(p);
+                        }
+                        else
+                        {
+                            Debug.LogWarning($"[AudioOptimizer] Could not copy '{sourcePath}' into the cache. Keeping original.");
+                        }
+                    }
+                }
+                finally
+                {
+                    AssetDatabase.StopAssetEditing();
+                }
+
+                AssetDatabase.StartAssetEditing();
+                try
+                {
+                    foreach (var p in copied)
+                    {
+                        if (!(AssetImporter.GetAtPath(p.CopyPath) is AudioImporter importer)) continue;
+                        importer.defaultSampleSettings = p.Settings;
+                        importer.SetOverrideSampleSettings(importerPlatform, p.Settings);
+                        importer.SaveAndReimport();
+                    }
+                }
+                finally
+                {
+                    AssetDatabase.StopAssetEditing();
+                }
+
+                foreach (var p in copied)
+                {
+                    AudioClip copy = AssetDatabase.LoadAssetAtPath<AudioClip>(p.CopyPath);
+                    if (copy == null) continue;
+                    replacements[p.Source] = copy;
+                    SynAssetCache.RecordUsage(p.CopyPath);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Visits every AudioClip reference in the scene: AudioSource.clip and any serialized AudioClip field of a
+        /// script (UdonBehaviour public variables and UdonSharp fields are both serialized object references).
+        /// The callback receives the clip and an action that replaces that reference.
+        /// </summary>
+        private static void ForEachClipReference(Scene scene, Action<AudioClip, Action<AudioClip>> visit)
+        {
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                foreach (AudioSource source in root.GetComponentsInChildren<AudioSource>(true))
+                {
+                    if (source == null || source.clip == null || SynProtectionData.IsProtected(source.gameObject)) continue;
+                    AudioSource target = source;
+                    visit(source.clip, copy => target.clip = copy);
+                }
+
+                foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if (behaviour == null || SynProtectionData.IsProtected(behaviour.gameObject)) continue;
+
+                    var serialized = new SerializedObject(behaviour);
+                    bool changed = false;
+                    SerializedProperty iterator = serialized.GetIterator();
+                    while (iterator.Next(true))
+                    {
+                        if (iterator.propertyType != SerializedPropertyType.ObjectReference) continue;
+                        if (!(iterator.objectReferenceValue is AudioClip clip)) continue;
+
+                        SerializedProperty property = iterator.Copy();
+                        visit(clip, copy =>
+                        {
+                            property.objectReferenceValue = copy;
+                            changed = true;
+                        });
+                    }
+
+                    if (changed) serialized.ApplyModifiedPropertiesWithoutUndo();
+                }
+            }
+        }
+
+        private static string GetImporterPlatformName(SynTargetPlatform platform)
+        {
+            switch (platform)
+            {
+                case SynTargetPlatform.Android: return "Android";
+                case SynTargetPlatform.iOS: return "iOS";
+                default: return "Standalone";
+            }
         }
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
-            string scanMode = SynSceneOptimizerSettings.GetString("Audio_ScanMode", "SceneOnly");
-            int modeIndex = scanMode == "EntireProject" ? 1 : 0;
-            string[] modes = { "Scene References Only", "Entire Project" };
-            
-            int newModeIndex = EditorGUILayout.Popup(new GUIContent("Scan Mode", "Scene References Only: Only optimizes clips currently assigned to AudioSources in the scene. Entire Project: Scans and optimizes every audio file in the project."), modeIndex, modes);
-            if (newModeIndex != modeIndex)
-            {
-                SynSceneOptimizerSettings.SetString("Audio_ScanMode", newModeIndex == 1 ? "EntireProject" : "SceneOnly");
-            }
+            EditorGUILayout.HelpBox("Optimizes the clips this scene uses (AudioSources and Udon/UdonSharp references). Optimized copies are kept in the optimizer cache; your audio files are never modified.", MessageType.Info);
+
+            float streamAbove = SynSceneOptimizerSettings.GetFloat("Audio_StreamAboveSeconds", 30f);
+            float newStreamAbove = Mathf.Max(1f, EditorGUILayout.FloatField(new GUIContent("Stream Clips Longer Than (s)", "Clips at least this long (music, ambience) are streamed from disk with Vorbis compression so they never sit in memory."), streamAbove));
+            if (!Mathf.Approximately(newStreamAbove, streamAbove)) SynSceneOptimizerSettings.SetFloat("Audio_StreamAboveSeconds", newStreamAbove);
+
+            float decompressBelow = SynSceneOptimizerSettings.GetFloat("Audio_DecompressBelowSeconds", 3f);
+            float newDecompressBelow = Mathf.Clamp(EditorGUILayout.FloatField(new GUIContent("Decompress Clips Shorter Than (s)", "Clips shorter than this (effects, UI sounds) use ADPCM decompressed on load for instant, low-CPU playback. Clips in between stay Vorbis-compressed in memory."), decompressBelow), 0f, newStreamAbove);
+            if (!Mathf.Approximately(newDecompressBelow, decompressBelow)) SynSceneOptimizerSettings.SetFloat("Audio_DecompressBelowSeconds", newDecompressBelow);
 
             float quality = SynSceneOptimizerSettings.GetFloat("Audio_VorbisQuality", 0.7f);
-            float newQuality = EditorGUILayout.Slider(new GUIContent("Vorbis Quality", "Compression quality for loops / large audio files (Vorbis format)."), quality, 0.1f, 1.0f);
-            if (!Mathf.Approximately(newQuality, quality))
-            {
-                SynSceneOptimizerSettings.SetFloat("Audio_VorbisQuality", newQuality);
-            }
+            float newQuality = EditorGUILayout.Slider(new GUIContent("Vorbis Quality", "Compression quality for streamed and compressed (Vorbis) clips."), quality, 0.1f, 1.0f);
+            if (!Mathf.Approximately(newQuality, quality)) SynSceneOptimizerSettings.SetFloat("Audio_VorbisQuality", newQuality);
 
             bool logOpt = SynSceneOptimizerSettings.GetBool("Audio_LogOptimized", true);
-            bool newLogOpt = EditorGUILayout.Toggle(new GUIContent("Log Optimized Clips", "If checked, prints details about which audio clips were re-imported and optimized to the console."), logOpt);
-            if (newLogOpt != logOpt)
+            bool newLogOpt = EditorGUILayout.Toggle(new GUIContent("Log Optimized Clips", "Print which clips were optimized and the settings chosen."), logOpt);
+            if (newLogOpt != logOpt) SynSceneOptimizerSettings.SetBool("Audio_LogOptimized", newLogOpt);
+
+            if (GUILayout.Button(new GUIContent("Reset Audio Import Settings...", "Put audio clips back to Unity's default import settings, e.g. to undo changes older versions of this pass made to your files.")))
             {
-                SynSceneOptimizerSettings.SetBool("Audio_LogOptimized", newLogOpt);
+                SynAudioResetWindow.Open();
             }
         }
     }

@@ -338,6 +338,18 @@ namespace Synthos.SynSceneOptimizer
             return false;
         }
 
+        // Unity lightmap files ("Lightmap-0_comp_light.exr") and Bakery outputs ("<scene>_LMA0_final", "_RNM0")
+        private static readonly System.Text.RegularExpressions.Regex LightmapNamePattern = new System.Text.RegularExpressions.Regex(
+            @"(^lightmap-\d+_comp_)|(_lma\d+)|(_rnm[0-2]$)|(^reflectionprobe-\d+$)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static readonly string[] LightingOutputFolders = { "bakerylightmaps", "vrclightvolumes", "lightvolumes", "ftlightmaps" };
+
+        /// <summary>
+        /// True for baked lighting data (lightmaps, directional maps, shadowmasks, Bakery/light volume outputs).
+        /// Uses the texture's import type, the scene's lightmap list and known output folders; file-name matching is
+        /// a narrow last resort so ordinary textures that merely contain "lightmap" or "volume" are not protected.
+        /// </summary>
         public static bool IsBakeryAsset(string path, Texture tex = null)
         {
             if (string.IsNullOrEmpty(path) && tex != null)
@@ -346,39 +358,36 @@ namespace Synthos.SynSceneOptimizer
             }
             if (string.IsNullOrEmpty(path)) return false;
 
-            string lowerPath = path.Replace('\\', '/').ToLowerInvariant();
-            if (lowerPath.Contains("bakery") ||
-                lowerPath.Contains("bakerylightmaps") ||
-                lowerPath.Contains("vrclightvolumes") ||
-                lowerPath.Contains("ftlightmaps") ||
-                lowerPath.Contains("lightmap") ||
-                lowerPath.Contains("lightvolume"))
+            // 1. Import type
+            if (AssetImporter.GetAtPath(path) is TextureImporter importer &&
+                (importer.textureType == TextureImporterType.Lightmap ||
+                 importer.textureType == TextureImporterType.DirectionalLightmap ||
+                 importer.textureType == TextureImporterType.Shadowmask))
             {
                 return true;
             }
 
-            if (tex != null)
+            // 2. Referenced by the open scenes' lightmap data
+            if (tex != null && LightmapSettings.lightmaps != null)
             {
-                string texName = tex.name.ToLowerInvariant();
-                if (texName.Contains("bakery") ||
-                    texName.Contains("lightmap") ||
-                    texName.Contains("lightvolume") ||
-                    texName.Contains("_volume"))
+                foreach (LightmapData lm in LightmapSettings.lightmaps)
                 {
-                    return true;
+                    if (lm != null && (lm.lightmapColor == tex || lm.lightmapDir == tex || lm.shadowMask == tex)) return true;
                 }
             }
 
-            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
-            if (importer != null)
+            // 3. Inside a known lighting output folder
+            string[] folders = Path.GetDirectoryName(path).Replace('\\', '/').ToLowerInvariant().Split('/');
+            foreach (string folder in folders)
             {
-                if (importer.textureType == TextureImporterType.Lightmap)
+                foreach (string output in LightingOutputFolders)
                 {
-                    return true;
+                    if (folder == output) return true;
                 }
             }
 
-            return false;
+            // 4. Lightmapper output file names
+            return LightmapNamePattern.IsMatch(Path.GetFileNameWithoutExtension(path));
         }
 
         public static bool IsMochieAsset(string path, Texture tex = null)

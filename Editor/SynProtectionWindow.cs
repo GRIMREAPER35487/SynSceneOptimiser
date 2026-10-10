@@ -10,7 +10,6 @@ namespace Synthos.SynSceneOptimizer
         private SynProtectionData data;
 
         [MenuItem("Window/Synthos/Protected Objects")]
-        [MenuItem("Tools/SynOptimizerFIX/Protected Objects")]
         public static void ShowWindow()
         {
             var window = GetWindow<SynProtectionWindow>("Protected Objects");

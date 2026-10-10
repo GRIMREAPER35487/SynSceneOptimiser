@@ -613,6 +613,24 @@ namespace Synthos.SynSceneOptimizer
             // Gather all active scene meshes and group by original unique Mesh
             var meshToRenderers = new Dictionary<Mesh, List<Renderer>>();
             var preservedRenderers = new HashSet<Renderer>();
+
+            // Renderers inside a LODGroup already have authored detail levels; decimating them again would
+            // degrade LOD0 and double-reduce LOD1+
+            var lodRenderers = new HashSet<Renderer>();
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                foreach (LODGroup lodGroup in root.GetComponentsInChildren<LODGroup>(true))
+                {
+                    foreach (LOD lod in lodGroup.GetLODs())
+                    {
+                        if (lod.renderers == null) continue;
+                        foreach (Renderer lodRenderer in lod.renderers)
+                        {
+                            if (lodRenderer != null) lodRenderers.Add(lodRenderer);
+                        }
+                    }
+                }
+            }
             
             // Sum counts for every single instance/renderer in the scene to match actual camera render counts
             int totalUnsimplifiableRenderedTris = 0;
@@ -668,7 +686,9 @@ namespace Synthos.SynSceneOptimizer
                 bool isLocallySkipped = isMeshLocallySkipped || isGoLocallySkipped;
                 bool isLocallyProtected = isMeshLocallyProtected || isGoLocallyProtected;
 
-                if (isGloballyProtected || isLocallySkipped || (skipLightmapped && isLightmapped))
+                bool cannotDecimate = lodRenderers.Contains(r) || !IsTriangleMesh(mesh);
+
+                if (isGloballyProtected || isLocallySkipped || cannotDecimate || (skipLightmapped && isLightmapped))
                 {
                     totalUnsimplifiableRenderedTris += triCount;
                 }
@@ -860,6 +880,8 @@ namespace Synthos.SynSceneOptimizer
                         var mf = r.GetComponent<MeshFilter>();
                         if (mf != null)
                         {
+                            SynPipelineCompactor.RecordMeshReplacement(r, mf.sharedMesh);
+                            SynPipelineCompactor.RetargetMeshColliders(r, mf.sharedMesh, finalMesh);
                             mf.sharedMesh = finalMesh;
                             EditorUtility.SetDirty(mf);
                             totalRenderersAffected++;
@@ -867,6 +889,7 @@ namespace Synthos.SynSceneOptimizer
                     }
                     else if (r is SkinnedMeshRenderer smr)
                     {
+                        SynPipelineCompactor.RecordMeshReplacement(r, smr.sharedMesh);
                         smr.sharedMesh = finalMesh;
                         EditorUtility.SetDirty(smr);
                         totalRenderersAffected++;
@@ -929,6 +952,16 @@ namespace Synthos.SynSceneOptimizer
             if (triCount >= 4000)
                 return SynSceneOptimizerSettings.GetFloat("MeshSimplifier_TierRatio_4k", 0.65f);
             return SynSceneOptimizerSettings.GetFloat("MeshSimplifier_TierRatio_Default", 0.80f);
+        }
+
+        // Meshia (QEM) only handles triangle topology; line, point and quad meshes are left untouched
+        private static bool IsTriangleMesh(Mesh mesh)
+        {
+            for (int i = 0; i < mesh.subMeshCount; i++)
+            {
+                if (mesh.GetTopology(i) != MeshTopology.Triangles) return false;
+            }
+            return true;
         }
 
         private static int GetTriangleCount(Mesh mesh)
