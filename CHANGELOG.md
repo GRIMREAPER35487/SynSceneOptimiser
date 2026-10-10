@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.3] - 2026-10-09
+
+### Fixed
+- **Merged Mochie materials came out fully metallic and fully smooth (regression in beta.2).** Mochie shaders were matched to the Unity Standard layout because their name contains "standard", so the palette texture never reached Mochie's packed map and the empty map sampled as white. The most specific shader layout now wins, and the Mochie palette setup assigns its packed and emission maps itself. Palette caches are rebuilt once.
+
 ## [1.1.0-beta.2] - 2026-10-09
 
 ### Added

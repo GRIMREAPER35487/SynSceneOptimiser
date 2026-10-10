@@ -353,15 +353,7 @@ namespace Synthos.SynSceneOptimizer
                 string shaderNameLower = group[0].shader.name.ToLower();
                 ShaderPropertyLayout layout = default;
                 bool hasLayout = false;
-                foreach (var kvp in ShaderLayouts)
-                {
-                    if (shaderNameLower.Contains(kvp.Key))
-                    {
-                        layout = kvp.Value;
-                        hasLayout = true;
-                        break;
-                    }
-                }
+                hasLayout = TryGetShaderLayout(shaderNameLower, out layout);
 
                 foreach (var mat in group)
                 {
@@ -425,7 +417,7 @@ namespace Synthos.SynSceneOptimizer
             // Build Master Hash incorporating all sorted keys to guarantee cache freshness if any scene color shifts
             var masterHashTokens = new List<string>
             {
-                "MasterPalette_v9_asset", // v9: neutral G/B in metallic map, shader-accurate metallic/smoothness/emission
+                "MasterPalette_v10_asset", // v10: Mochie matched to its own layout; v9: shader-accurate metallic/smoothness/emission
                 QualitySettings.activeColorSpace.ToString(),
                 masterGridSize.ToString(),
                 allSceneUniqueKeys.Count.ToString(),
@@ -544,15 +536,7 @@ namespace Synthos.SynSceneOptimizer
                 string shaderNameLower = group[0].shader.name.ToLower();
                 ShaderPropertyLayout layout = default;
                 bool hasLayout = false;
-                foreach (var kvp in ShaderLayouts)
-                {
-                    if (shaderNameLower.Contains(kvp.Key))
-                    {
-                        layout = kvp.Value;
-                        hasLayout = true;
-                        break;
-                    }
-                }
+                hasLayout = TryGetShaderLayout(shaderNameLower, out layout);
 
                 var keyToPixel = globalKeyToPixel;
                 var materialToKey = allMaterialToKey;
@@ -679,9 +663,28 @@ namespace Synthos.SynSceneOptimizer
 
                 if (IsMochieStandard(paletteMat))
                 {
-                    ConfigureMochiePalette(paletteMat, metallicTex != null, emissionTex != null);
+                    ConfigureMochiePalette(paletteMat, metallicTex, emissionTex);
                 }
             }
+        }
+
+        /// <summary>
+        /// Finds the layout for a shader. The most specific (longest) matching key wins, so "mochie/standard" is not
+        /// mistaken for Unity's "standard" just because its name contains that word.
+        /// </summary>
+        private static bool TryGetShaderLayout(string shaderNameLower, out ShaderPropertyLayout layout)
+        {
+            layout = default;
+            int bestLength = -1;
+            foreach (var kvp in ShaderLayouts)
+            {
+                if (kvp.Key.Length > bestLength && shaderNameLower.Contains(kvp.Key))
+                {
+                    layout = kvp.Value;
+                    bestLength = kvp.Key.Length;
+                }
+            }
+            return bestLength >= 0;
         }
 
         private static bool IsMochieStandard(Material mat)
@@ -695,15 +698,21 @@ namespace Synthos.SynSceneOptimizer
         /// abs(_SmoothnessToggle - value). Everything that would sample the palette differently from plain UV0
         /// (triplanar, stochastic, UV sets, parallax, emission masks) is reset to defaults.
         /// </summary>
-        private static void ConfigureMochiePalette(Material mat, bool hasMetallicMap, bool hasEmission)
+        private static void ConfigureMochiePalette(Material mat, Texture2D metallicTex, Texture2D emissionTex)
         {
             void SetIfPresent(string prop, float value)
             {
                 if (mat.HasProperty(prop)) mat.SetFloat(prop, value);
             }
 
-            if (hasMetallicMap)
+            bool hasEmission = emissionTex != null;
+            if (metallicTex != null && mat.HasProperty("_PackedMap"))
             {
+                // Without the palette in _PackedMap, packed mode would sample Mochie's default white map
+                // (metallic 1, smoothness 1)
+                mat.SetTexture("_PackedMap", metallicTex);
+                mat.SetTextureScale("_PackedMap", Vector2.one);
+                mat.SetTextureOffset("_PackedMap", Vector2.zero);
                 SetIfPresent("_PrimaryWorkflow", 1);
                 mat.EnableKeyword("_WORKFLOW_PACKED_ON");
                 SetIfPresent("_MetallicChannel", 0);   // R
@@ -730,12 +739,22 @@ namespace Synthos.SynSceneOptimizer
 
             if (hasEmission)
             {
+                if (mat.HasProperty("_EmissionMap"))
+                {
+                    mat.SetTexture("_EmissionMap", emissionTex);
+                    mat.SetTextureScale("_EmissionMap", Vector2.one);
+                    mat.SetTextureOffset("_EmissionMap", Vector2.zero);
+                }
+                SetIfPresent("_EmissionStrength", 1);
+                if (mat.HasProperty("_EmissionColor")) mat.SetColor("_EmissionColor", Color.white);
+                mat.EnableKeyword("_EMISSION_ON");
                 if (mat.HasProperty("_EmissionMask")) mat.SetTexture("_EmissionMask", null);
                 SetIfPresent("_EmissionPulseWave", 0);
                 mat.globalIlluminationFlags &= ~MaterialGlobalIlluminationFlags.EmissiveIsBlack;
             }
             else
             {
+                mat.DisableKeyword("_EMISSION_ON");
                 mat.DisableKeyword("_AUDIOLINK_ON");
                 mat.DisableKeyword("_AUDIOLINK_META_ON");
             }
@@ -1182,15 +1201,7 @@ namespace Synthos.SynSceneOptimizer
             string shaderNameLower = mat.shader.name.ToLower();
             ShaderPropertyLayout layout = default;
             bool hasLayout = false;
-            foreach (var kvp in ShaderLayouts)
-            {
-                if (shaderNameLower.Contains(kvp.Key))
-                {
-                    layout = kvp.Value;
-                    hasLayout = true;
-                    break;
-                }
-            }
+            hasLayout = TryGetShaderLayout(shaderNameLower, out layout);
 
             bool hasMetallic = false;
             bool hasEmission = false;
