@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.8] - 2026-10-10
+
+### Fixed
+- Beta.7 failed to compile (the editor assembly was missing its reference to `VRC.Udon.Editor`), so Unity kept running beta.6 and the distance culling controls never appeared.
+
 ## [1.1.0-beta.7] - 2026-10-10
 
 ### Added
