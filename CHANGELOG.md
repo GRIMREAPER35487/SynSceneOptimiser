@@ -2,6 +2,12 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.4] - 2026-10-09
+
+### Fixed
+- **Preview (Dry Run) changed the open scene.** The renderer search also collected renderers from every other loaded scene, so passes and the final apply step modified the user's scene alongside the temporary preview copy. It now only returns renderers from the scene being optimized, its cache is tied to that scene, and the risky fallback that could reach prefab/preview scenes was removed.
+- Mesh auto-tune measures the scene being optimized instead of whichever scene is active.
+
 ## [1.1.0-beta.3] - 2026-10-09
 
 ### Fixed
