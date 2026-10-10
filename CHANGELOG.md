@@ -2,6 +2,13 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [Unreleased]
+
+### Fixed
+- UI Audit counted every graphic without "skip when transparent" as a transparent graphic being drawn. It now reports only graphics that are fully transparent right now, and lists the rest separately.
+- UI Audit offered fixes on video player canvases, which the UI Optimizer pass skips. They are now marked "video player, not changed".
+- UI Audit note counts read like part of the canvas name (e.g. "Menu (3)"); they now show as "- 3 notes".
+
 ## [1.1.0-beta.6] - 2026-10-10
 
 ### Added

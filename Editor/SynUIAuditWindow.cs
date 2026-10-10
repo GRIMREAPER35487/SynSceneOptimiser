@@ -80,7 +80,7 @@ namespace Synthos.SynSceneOptimizer
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             EditorGUILayout.LabelField($"{shown.Count} canvases ({active.Count} active)   ~{active.Sum(r => r.EstimatedDraws)} draws when all active canvases are in view   {active.Sum(r => r.VisibleGraphicCount)} visible graphics");
             EditorGUILayout.LabelField(
-                $"UI Optimizer would fix: {shown.Sum(r => r.FixableTransparent)} transparent graphics, {shown.Sum(r => r.FixableRaycastTargets)} raycast targets, {shown.Sum(r => r.FixableZOffsets)} tiny Z offsets   |   Masks: {shown.Sum(r => r.MaskCount)}",
+                $"UI Optimizer would fix: {shown.Sum(r => r.TransparentNow)} transparent graphics being drawn (+{shown.Sum(r => r.FixableTransparent - r.TransparentNow)} skipped when faded out later), {shown.Sum(r => r.FixableRaycastTargets)} raycast targets, {shown.Sum(r => r.FixableZOffsets)} tiny Z offsets   |   Masks: {shown.Sum(r => r.MaskCount)}",
                 EditorStyles.miniLabel);
             EditorGUILayout.EndVertical();
         }
@@ -105,7 +105,8 @@ namespace Synthos.SynSceneOptimizer
             string label = report.Canvas.name;
             if (!report.IsActive) label += "  (inactive)";
             if (report.IsProtected) label += "  [protected]";
-            if (report.Warnings.Count > 0) label += $"  ({report.Warnings.Count})";
+            if (report.IsVideoPlayer) label += "  [video player, not changed]";
+            if (report.Warnings.Count > 0) label += $"  - {report.Warnings.Count} note{(report.Warnings.Count == 1 ? "" : "s")}";
 
             bool newOpen = EditorGUILayout.Foldout(open, new GUIContent(label, report.Path), true);
             if (newOpen != open)

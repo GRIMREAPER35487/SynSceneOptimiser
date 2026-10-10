@@ -35,7 +35,11 @@ namespace Synthos.SynSceneOptimizer
         public bool IsScriptReferenced;
 
         // What the UI Optimizer pass would change on this canvas
+        // Graphics that get "skip when transparent", and how many of those are fully transparent right now
+        // (the ones that actually stop being drawn)
         public int FixableTransparent;
+        public int TransparentNow;
+        public bool IsVideoPlayer;
         public int FixableRaycastTargets;
         public int FixableZOffsets;
 
@@ -120,6 +124,7 @@ namespace Synthos.SynSceneOptimizer
                 Canvas = canvas,
                 Path = SynPersistentObjectReference.GetHierarchyPath(canvas.transform),
                 IsProtected = SynProtectionData.IsProtected(canvas.gameObject),
+                IsVideoPlayer = SynSceneQuery.IsVideoComponentDetected(canvas),
                 IsNested = canvas.transform.parent != null && GetOwningCanvas(canvas.transform.parent) != null,
                 IsActive = canvas.isActiveAndEnabled,
                 RenderMode = canvas.renderMode,
@@ -188,9 +193,10 @@ namespace Synthos.SynSceneOptimizer
             report.MaterialCount = materials.Count;
             report.Shaders = shaders.OrderBy(s => s).ToList();
 
-            if (!report.IsProtected)
+            // Same skips as the UI Optimizer pass, so the audit never promises fixes the build won't make
+            if (!report.IsProtected && !report.IsVideoPlayer)
             {
-                report.FixableTransparent = FixTransparentCulling(canvas, false);
+                report.FixableTransparent = FixTransparentCulling(canvas, false, out report.TransparentNow);
                 report.FixableRaycastTargets = FixRaycastTargets(canvas, false);
                 report.FixableZOffsets = FlattenTinyZOffsets(canvas, false);
             }
@@ -214,9 +220,9 @@ namespace Synthos.SynSceneOptimizer
                 string fixable = report.FixableZOffsets > 0 ? $" {report.FixableZOffsets} are tiny offsets the UI Optimizer flattens." : "";
                 report.Warnings.Add($"{report.OffPlaneCount} element(s) are not flat on the canvas (moved forward/back or tilted), which can stop them batching with the rest.{fixable}");
             }
-            if (report.FixableTransparent > 0)
+            if (report.TransparentNow > 0)
             {
-                report.Warnings.Add($"{report.FixableTransparent} fully transparent graphic(s) are still drawn. The UI Optimizer stops drawing them; clicks still work.");
+                report.Warnings.Add($"{report.TransparentNow} fully transparent graphic(s) are still drawn. The UI Optimizer stops drawing them; clicks still work.");
             }
             if (report.FixableRaycastTargets > 0)
             {
@@ -295,11 +301,13 @@ namespace Synthos.SynSceneOptimizer
 
         /// <summary>
         /// Turns on "Cull Transparent Mesh" so graphics at zero alpha are not drawn. Unity re-checks the alpha every
-        /// time the graphic changes, so fades keep working. Returns how many graphics were (or would be) changed.
+        /// time the graphic changes, so fades keep working. Returns how many graphics were (or would be) changed;
+        /// <paramref name="transparentNow"/> is how many of them are fully transparent at the moment.
         /// </summary>
-        public static int FixTransparentCulling(Canvas canvas, bool apply)
+        public static int FixTransparentCulling(Canvas canvas, bool apply, out int transparentNow)
         {
             int count = 0;
+            transparentNow = 0;
             foreach (Graphic g in GetOwnedGraphics(canvas))
             {
                 if (g == null || SynProtectionData.IsProtected(g.gameObject)) continue;
@@ -312,6 +320,7 @@ namespace Synthos.SynSceneOptimizer
                 if (!UsesStandardUIShader(g)) continue;
 
                 count++;
+                if (g.isActiveAndEnabled && g.color.a <= 0.001f) transparentNow++;
                 if (apply) cr.cullTransparentMesh = true;
             }
             return count;

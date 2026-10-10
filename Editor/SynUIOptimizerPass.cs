@@ -30,21 +30,25 @@ namespace Synthos.SynSceneOptimizer
             bool raycastTargets = SynSceneOptimizerSettings.GetBool(RaycastTargetsKey, true);
             bool flattenZ = SynSceneOptimizerSettings.GetBool(FlattenZKey, true);
 
-            int culled = 0, raycastsOff = 0, flattened = 0, canvasCount = 0;
+            int culled = 0, transparentNow = 0, raycastsOff = 0, flattened = 0, canvasCount = 0;
             foreach (Canvas canvas in SynUIAnalysis.GetCanvases(scene))
             {
                 if (canvas == null || SynProtectionData.IsProtected(canvas.gameObject)) continue;
                 if (SynSceneQuery.IsVideoComponentDetected(canvas)) continue;
                 canvasCount++;
 
-                if (cullTransparent) culled += SynUIAnalysis.FixTransparentCulling(canvas, true);
+                if (cullTransparent)
+                {
+                    culled += SynUIAnalysis.FixTransparentCulling(canvas, true, out int nowTransparent);
+                    transparentNow += nowTransparent;
+                }
                 if (raycastTargets) raycastsOff += SynUIAnalysis.FixRaycastTargets(canvas, true);
                 if (flattenZ) flattened += SynUIAnalysis.FlattenTinyZOffsets(canvas, true);
             }
 
             SynPipelineCompactor.LogChange(
                 "UI Optimizer",
-                $"Checked {canvasCount} canvases: stopped drawing {culled} transparent graphics, turned off Raycast Target on {raycastsOff} unclickable graphics, flattened {flattened} tiny Z offsets.");
+                $"Checked {canvasCount} canvases: {culled} graphics now skip drawing while fully transparent ({transparentNow} are transparent right now), turned off Raycast Target on {raycastsOff} unclickable graphics, flattened {flattened} tiny Z offsets.");
 
             // A short cost summary, so the report shows which canvases are worth a closer look
             var top = SynUIAnalysis.AnalyzeScene(scene, findRuntimeToggles: false).Where(r => r.IsActive).Take(3).ToList();
