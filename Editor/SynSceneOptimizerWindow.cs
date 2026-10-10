@@ -14,6 +14,7 @@ namespace Synthos.SynSceneOptimizer
         private Vector2 scrollPosition = Vector2.zero;
         private Vector2 fixesScrollPosition = Vector2.zero;
         private int selectedTab = 0;
+        private int selectedPreset = 0;
         private readonly string[] tabNames = new string[] { "Optimizers", "General Fixes" };
 
         private double _lastStatsUpdateTime = -10.0;
@@ -113,6 +114,28 @@ namespace Synthos.SynSceneOptimizer
 
             if (selectedTab == 0)
             {
+            // Presets and reset (settings are stored per project in ProjectSettings/SynSceneOptimizer.json)
+            GUILayout.BeginHorizontal();
+            string[] presetNames = System.Array.ConvertAll(SynSettingsPresets.All, p => p.Name);
+            selectedPreset = EditorGUILayout.Popup(new GUIContent("Preset", SynSettingsPresets.All[selectedPreset].Description), selectedPreset, presetNames);
+            if (GUILayout.Button("Apply Preset", GUILayout.Width(100)))
+            {
+                var preset = SynSettingsPresets.All[selectedPreset];
+                if (EditorUtility.DisplayDialog("Apply Preset: " + preset.Name, preset.Description + "\n\nTexture, mesh simplification and audio quality settings will be replaced. Pass on/off toggles are kept.", "Apply", "Cancel"))
+                {
+                    SynSettingsPresets.Apply(preset);
+                }
+            }
+            if (GUILayout.Button("Reset All", GUILayout.Width(80)))
+            {
+                if (EditorUtility.DisplayDialog("Reset Optimizer Settings", "Reset every optimizer setting in this project (including pass on/off toggles) to the built-in defaults?", "Reset", "Cancel"))
+                {
+                    SynSceneOptimizerSettings.ResetAll();
+                }
+            }
+            GUILayout.EndHorizontal();
+            EditorGUILayout.Space(3);
+
                 // Master enable/disable all override toggle
             GUILayout.BeginHorizontal();
             bool globalEnabled = SynSceneOptimizerSettings.GetBool("GlobalPassesEnabled", true);
@@ -162,6 +185,26 @@ namespace Synthos.SynSceneOptimizer
             if (newForceInstancing != forceInstancing)
             {
                 SynSceneOptimizerSettings.SetBool("ForceGPUInstancingOnBaked", newForceInstancing);
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(new GUIContent("Preview Optimization (Dry Run)", "Runs every enabled pass on a temporary copy of the open scene and shows what would change, with VRAM before and after. Your scene is not modified."), GUILayout.Height(24)))
+            {
+                SynAutomaticOptimizerPipeline.RunPreview();
+            }
+            if (GUILayout.Button("Last Report", GUILayout.Height(24), GUILayout.Width(100)))
+            {
+                SynRunReportWindow.ShowReport();
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            bool showReport = SynSceneOptimizerSettings.GetBool("ShowReportAfterRun", false);
+            bool newShowReport = EditorGUILayout.ToggleLeft(new GUIContent("Show Report After Each Run", "Open the optimization report automatically after every build and Play Mode run."), showReport);
+            if (newShowReport != showReport)
+            {
+                SynSceneOptimizerSettings.SetBool("ShowReportAfterRun", newShowReport);
             }
             GUILayout.EndHorizontal();
 

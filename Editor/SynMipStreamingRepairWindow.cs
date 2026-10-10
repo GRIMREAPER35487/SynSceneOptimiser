@@ -121,7 +121,7 @@ namespace Synthos.SynSceneOptimizer
         }
 
         // Registry, built-in and git packages are read-only; only project and embedded/local packages can be fixed
-        private static bool IsWritable(string path)
+        internal static bool IsWritable(string path)
         {
             if (path.StartsWith("Assets/")) return true;
             var package = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(path);

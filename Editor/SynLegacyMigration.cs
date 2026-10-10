@@ -21,7 +21,7 @@ namespace Synthos.SynSceneOptimizer
             EditorApplication.delayCall += CheckAndMigrateLegacyData;
         }
 
-        [MenuItem("Tools/Synthos/Migrate Legacy Optimizer Data", false, 100)]
+        [MenuItem("Window/Synthos/Migrate Legacy Optimizer Data", false, 100)]
         public static void ForceMigration()
         {
             ExecuteMigration(true);

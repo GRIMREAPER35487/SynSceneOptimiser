@@ -287,29 +287,66 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            if (candidateList.Count == 0) return;
-
-            // Step 4a: Capture pixel snapshots on Main Thread
-            foreach (var candidate in candidateList)
+            // Step 3: A downscaled copy only replaces the original on redirected renderers. If anything else in the
+            // scene (protected/video renderers, particles, UI, sprites, Udon, skybox, animated material swaps)
+            // still uses the original, both versions would ship, so such textures are left alone.
+            var pinnedTextures = CollectTexturesUsedOutsideRedirectedRenderers(scene, renderers);
+            int pinnedCount = candidateList.RemoveAll(c => pinnedTextures.Contains(c.SourceTexture));
+            foreach (var tex in pinnedTextures) candidateMap.Remove(tex);
+            if (pinnedCount > 0 && SynSceneOptimizerSettings.GetBool("EnableVerboseLogging", false))
             {
-                candidate.PixelsSnapshot = ExtractPixels(candidate.SourceTexture, out candidate.Width, out candidate.Height);
+                Debug.Log($"[SYN SCENE OPTIMIZER] Texture Complexity Compressor: skipped {pinnedCount} textures that are also used outside optimized renderers (downscaling them would ship both versions).");
             }
 
-            // Step 4b: Multi-threaded complexity analysis across candidate textures (32 threads)
-            Parallel.ForEach(candidateList, candidate =>
+            if (candidateList.Count == 0) return;
+
+            // Step 4: Complexity scores. Cached per texture content in Library/ so unchanged textures are never
+            // read back again; the rest are analyzed in small batches from a <=1024px readback.
+            var scoreCache = LoadScoreCache();
+            var toAnalyze = new List<TextureCandidate>();
+            foreach (var candidate in candidateList)
             {
-                if (candidate.PixelsSnapshot != null && candidate.PixelsSnapshot.Length > 0)
+                if (scoreCache.TryGetValue(GetScoreKey(candidate), out float cachedScore))
                 {
-                    candidate.ComplexityScore = SynTextureAnalysisEngine.AnalyzeComplexity(candidate.PixelsSnapshot, candidate.Width, candidate.Height, candidate.IsNormalMap, candidate.AlphaIsTransparency);
-                    candidate.RecommendedDivisor = complexityCalc.CalculateRecommendedDivisor(candidate.ComplexityScore);
+                    candidate.ComplexityScore = cachedScore;
+                    candidate.RecommendedDivisor = complexityCalc.CalculateRecommendedDivisor(cachedScore);
                 }
                 else
                 {
-                    candidate.ComplexityScore = 0.5f;
-                    candidate.RecommendedDivisor = 1;
+                    toAnalyze.Add(candidate);
                 }
-                candidate.PixelsSnapshot = null; // free memory
-            });
+            }
+
+            const int batchSize = 16;
+            for (int start = 0; start < toAnalyze.Count; start += batchSize)
+            {
+                var batch = toAnalyze.GetRange(start, Math.Min(batchSize, toAnalyze.Count - start));
+                foreach (var candidate in batch)
+                {
+                    candidate.PixelsSnapshot = ExtractPixels(candidate.SourceTexture, AnalysisReadbackSize, out candidate.Width, out candidate.Height);
+                }
+
+                Parallel.ForEach(batch, candidate =>
+                {
+                    if (candidate.PixelsSnapshot != null && candidate.PixelsSnapshot.Length > 0)
+                    {
+                        candidate.ComplexityScore = SynTextureAnalysisEngine.AnalyzeComplexity(candidate.PixelsSnapshot, candidate.Width, candidate.Height, candidate.IsNormalMap, candidate.AlphaIsTransparency);
+                        candidate.RecommendedDivisor = complexityCalc.CalculateRecommendedDivisor(candidate.ComplexityScore);
+                    }
+                    else
+                    {
+                        candidate.ComplexityScore = 0.5f;
+                        candidate.RecommendedDivisor = 1;
+                    }
+                    candidate.PixelsSnapshot = null; // free memory
+                });
+
+                foreach (var candidate in batch)
+                {
+                    scoreCache[GetScoreKey(candidate)] = candidate.ComplexityScore;
+                }
+            }
+            if (toAnalyze.Count > 0) SaveScoreCache(scoreCache);
 
             // Step 5: Process and Cache Optimized Textures
             int downscaledCount = 0;
@@ -475,18 +512,19 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
-        private static Color32[] ExtractPixels(Texture2D src, out int width, out int height)
+        // The complexity metrics sample at most ~512 px across, so a 1024 px readback keeps the same detail while
+        // using 1/16 of the memory of a 4K readback
+        private const int AnalysisReadbackSize = 1024;
+
+        private static Color32[] ExtractPixels(Texture2D src, int maxSize, out int width, out int height)
         {
             width = src.width;
             height = src.height;
-
-            if (src.isReadable)
+            int largest = Mathf.Max(width, height);
+            if (largest > maxSize)
             {
-                try
-                {
-                    return src.GetPixels32();
-                }
-                catch { }
+                width = Mathf.Max(1, width * maxSize / largest);
+                height = Mathf.Max(1, height * maxSize / largest);
             }
 
             RenderTexture rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32);
@@ -663,6 +701,126 @@ namespace Synthos.SynSceneOptimizer
             }
 
             return result;
+        }
+
+        private const string ScoreCachePath = "Library/SynSceneOptimizer/TextureComplexityScores.txt";
+
+        // Identity hash covers the texture content and import settings; flags and algorithm version cover the analysis
+        private static string GetScoreKey(TextureCandidate c)
+        {
+            return $"v2|{SynAssetCache.GetAssetIdentityHash(c.SourceTexture)}|n{(c.IsNormalMap ? 1 : 0)}|a{(c.AlphaIsTransparency ? 1 : 0)}";
+        }
+
+        private static Dictionary<string, float> LoadScoreCache()
+        {
+            var cache = new Dictionary<string, float>();
+            if (!File.Exists(ScoreCachePath)) return cache;
+            try
+            {
+                foreach (string line in File.ReadAllLines(ScoreCachePath))
+                {
+                    int tab = line.LastIndexOf('\t');
+                    if (tab > 0 && float.TryParse(line.Substring(tab + 1), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float score))
+                    {
+                        cache[line.Substring(0, tab)] = score;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[SYN SCENE OPTIMIZER] Could not read texture score cache: {e.Message}");
+            }
+            return cache;
+        }
+
+        private static void SaveScoreCache(Dictionary<string, float> cache)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(ScoreCachePath));
+                var lines = new List<string>(cache.Count);
+                foreach (var kvp in cache) lines.Add(kvp.Key + "\t" + kvp.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
+                File.WriteAllLines(ScoreCachePath, lines);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[SYN SCENE OPTIMIZER] Could not save texture score cache: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Textures that something other than the redirected Mesh/Skinned renderers references directly or via a
+        /// material: other components (protected and video renderers, particles, UI, sprites, Udon/UdonSharp fields,
+        /// lights, probes), the skybox, and materials/textures/sprites swapped in by animation clips.
+        /// </summary>
+        private static HashSet<Texture2D> CollectTexturesUsedOutsideRedirectedRenderers(Scene scene, List<Renderer> renderers)
+        {
+            var redirected = new HashSet<Renderer>();
+            foreach (Renderer r in renderers)
+            {
+                if (r != null && !SynSceneQuery.IsVideoComponentDetected(r)) redirected.Add(r);
+            }
+
+            var pinned = new HashSet<Texture2D>();
+            var visitedMaterials = new HashSet<Material>();
+            var visitedClips = new HashSet<AnimationClip>();
+
+            void PinObject(UnityEngine.Object obj)
+            {
+                switch (obj)
+                {
+                    case Texture2D tex:
+                        pinned.Add(tex);
+                        break;
+                    case Sprite sprite when sprite.texture != null:
+                        pinned.Add(sprite.texture);
+                        break;
+                    case Material mat when visitedMaterials.Add(mat) && mat.shader != null:
+                        int count = ShaderUtil.GetPropertyCount(mat.shader);
+                        for (int i = 0; i < count; i++)
+                        {
+                            if (ShaderUtil.GetPropertyType(mat.shader, i) != ShaderUtil.ShaderPropertyType.TexEnv) continue;
+                            if (mat.GetTexture(ShaderUtil.GetPropertyName(mat.shader, i)) is Texture2D matTex) pinned.Add(matTex);
+                        }
+                        break;
+                }
+            }
+
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                foreach (Component component in root.GetComponentsInChildren<Component>(true))
+                {
+                    if (component == null || component is Transform || component is MeshFilter) continue;
+                    if (component is Renderer r && redirected.Contains(r)) continue;
+
+                    if (component is Animator animator && animator.runtimeAnimatorController != null)
+                    {
+                        foreach (AnimationClip clip in animator.runtimeAnimatorController.animationClips)
+                        {
+                            if (clip == null || !visitedClips.Add(clip)) continue;
+                            foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip))
+                            {
+                                foreach (var key in AnimationUtility.GetObjectReferenceCurve(clip, binding))
+                                {
+                                    PinObject(key.value);
+                                }
+                            }
+                        }
+                    }
+
+                    var iterator = new SerializedObject(component).GetIterator();
+                    while (iterator.Next(true))
+                    {
+                        if (iterator.propertyType == SerializedPropertyType.ObjectReference && iterator.objectReferenceValue != null)
+                        {
+                            PinObject(iterator.objectReferenceValue);
+                        }
+                    }
+                }
+            }
+
+            if (RenderSettings.skybox != null) PinObject(RenderSettings.skybox);
+            return pinned;
         }
 
         private static bool IsMainTextureProperty(string propName)

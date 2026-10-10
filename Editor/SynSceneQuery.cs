@@ -75,37 +75,49 @@ namespace Synthos.SynSceneOptimizer
         public static void ClearCache()
         {
             CachedRenderers.Clear();
+            VideoTransformCache.Clear();
             isCached = false;
         }
 
+        // Per-run memo: whether a transform or any of its parents carries a video player / pedestal component
+        private static readonly Dictionary<Transform, bool> VideoTransformCache = new Dictionary<Transform, bool>();
+
         public static bool IsVideoComponentDetected(Component component)
         {
-            if (component == null) return false;
-            Transform current = component.transform;
-            while (current != null)
-            {
-                Component[] components = current.GetComponents<Component>();
-                foreach (Component comp in components)
-                {
-                    if (comp == null) continue;
-                    System.Type type = comp.GetType();
-                    string fullName = type.FullName ?? "";
-                    string name = type.Name;
+            return component != null && IsVideoTransform(component.transform);
+        }
 
-                    if (fullName.Contains("ArchiTech.ProTV") ||
-                        fullName.Contains("VideoPlayer") ||
-                        fullName.Contains("VPManager") ||
-                        fullName.Contains("TVManager") ||
-                        fullName.Contains("VRCAvatarPedestal") ||
-                        name.Contains("VideoPlayer") ||
-                        name.Contains("VPManager") ||
-                        name.Contains("TVManager") ||
-                        name.Contains("VRCAvatarPedestal"))
-                    {
-                        return true;
-                    }
+        private static bool IsVideoTransform(Transform t)
+        {
+            if (t == null) return false;
+            if (VideoTransformCache.TryGetValue(t, out bool cached)) return cached;
+
+            bool result = HasVideoComponent(t) || IsVideoTransform(t.parent);
+            VideoTransformCache[t] = result;
+            return result;
+        }
+
+        private static bool HasVideoComponent(Transform t)
+        {
+            foreach (Component comp in t.GetComponents<Component>())
+            {
+                if (comp == null) continue;
+                System.Type type = comp.GetType();
+                string fullName = type.FullName ?? "";
+                string name = type.Name;
+
+                if (fullName.Contains("ArchiTech.ProTV") ||
+                    fullName.Contains("VideoPlayer") ||
+                    fullName.Contains("VPManager") ||
+                    fullName.Contains("TVManager") ||
+                    fullName.Contains("VRCAvatarPedestal") ||
+                    name.Contains("VideoPlayer") ||
+                    name.Contains("VPManager") ||
+                    name.Contains("TVManager") ||
+                    name.Contains("VRCAvatarPedestal"))
+                {
+                    return true;
                 }
-                current = current.parent;
             }
             return false;
         }

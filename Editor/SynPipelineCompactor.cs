@@ -48,21 +48,6 @@ namespace Synthos.SynSceneOptimizer
         private static readonly Dictionary<Mesh, SynVirtualMeshState> MeshCache = new Dictionary<Mesh, SynVirtualMeshState>();
         private static readonly Dictionary<Renderer, SynVirtualRendererState> RendererCache = new Dictionary<Renderer, SynVirtualRendererState>();
 
-        public struct FloatPropertyAssignment
-        {
-            public string Name;
-            public float Value;
-        }
-
-        public struct VectorPropertyAssignment
-        {
-            public string Name;
-            public Vector4 Value;
-        }
-
-        public static readonly Dictionary<Renderer, List<FloatPropertyAssignment>> RendererFloatAssignments = new Dictionary<Renderer, List<FloatPropertyAssignment>>();
-        public static readonly Dictionary<Renderer, List<VectorPropertyAssignment>> RendererVectorAssignments = new Dictionary<Renderer, List<VectorPropertyAssignment>>();
-
         public static readonly List<string> PipelineLogSummary = new List<string>();
 
         // Mesh each renderer had before any pass swapped it (dedup, memory optimizer, palettes),
@@ -90,6 +75,23 @@ namespace Synthos.SynSceneOptimizer
         {
             if (r == null || previousMesh == null || OriginalRendererMeshes.ContainsKey(r)) return;
             OriginalRendererMeshes[r] = previousMesh;
+        }
+
+        /// <summary>
+        /// MeshColliders on the renderer's GameObject that used its old mesh follow it to the new mesh, so the
+        /// full-resolution or duplicate mesh no longer ships just for physics.
+        /// </summary>
+        public static void RetargetMeshColliders(Renderer r, Mesh oldMesh, Mesh newMesh)
+        {
+            if (r == null || oldMesh == null || newMesh == null || oldMesh == newMesh) return;
+            foreach (MeshCollider collider in r.GetComponents<MeshCollider>())
+            {
+                if (collider != null && collider.sharedMesh == oldMesh)
+                {
+                    collider.sharedMesh = newMesh;
+                    EditorUtility.SetDirty(collider);
+                }
+            }
         }
 
         /// <summary>
@@ -133,8 +135,6 @@ namespace Synthos.SynSceneOptimizer
             RendererCache.Clear();
             OriginalRendererMeshes.Clear();
             GeneratedAssets.Clear();
-            RendererFloatAssignments.Clear();
-            RendererVectorAssignments.Clear();
             PipelineLogSummary.Clear();
 
             PipelineStopwatch.Reset();
@@ -485,8 +485,8 @@ namespace Synthos.SynSceneOptimizer
             {
                 if (r == null) continue;
 
-                // Protect screening check
-                if (SynSceneQuery.IsVideoComponentDetected(r))
+                // Video players and user-protected objects keep their original materials and meshes
+                if (SynSceneQuery.IsVideoComponentDetected(r) || SynProtectionData.IsProtected(r.gameObject))
                 {
                     continue;
                 }
@@ -544,45 +544,6 @@ namespace Synthos.SynSceneOptimizer
                         }
                     }
                 }
-            }
-
-            // 4. Apply material property blocks (non-static targets)
-            foreach (var kvp in RendererFloatAssignments)
-            {
-                Renderer r = kvp.Key;
-                if (r == null) continue;
-
-                SynDynamicPropertyBlock comp = r.gameObject.GetComponent<SynDynamicPropertyBlock>();
-                if (comp == null)
-                {
-                    comp = r.gameObject.AddComponent<SynDynamicPropertyBlock>();
-                }
-                foreach (var assign in kvp.Value)
-                {
-                    comp.floats.RemoveAll(f => f.name == assign.Name);
-                    comp.floats.Add(new SynDynamicPropertyBlock.FloatProp { name = assign.Name, value = assign.Value });
-                }
-                EditorUtility.SetDirty(comp);
-                comp.Apply();
-            }
-
-            foreach (var kvp in RendererVectorAssignments)
-            {
-                Renderer r = kvp.Key;
-                if (r == null) continue;
-
-                SynDynamicPropertyBlock comp = r.gameObject.GetComponent<SynDynamicPropertyBlock>();
-                if (comp == null)
-                {
-                    comp = r.gameObject.AddComponent<SynDynamicPropertyBlock>();
-                }
-                foreach (var assign in kvp.Value)
-                {
-                    comp.vectors.RemoveAll(v => v.name == assign.Name);
-                    comp.vectors.Add(new SynDynamicPropertyBlock.VectorProp { name = assign.Name, value = assign.Value });
-                }
-                EditorUtility.SetDirty(comp);
-                comp.Apply();
             }
 
             PipelineStopwatch.Stop();

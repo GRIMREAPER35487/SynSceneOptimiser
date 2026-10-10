@@ -38,6 +38,7 @@ namespace Synthos.SynSceneOptimizer
             bool purgeClones = SynSceneOptimizerSettings.GetBool("MeshOpt_PurgeIntermediateClones", true);
 
             int meshesOptimized = 0;
+            int clonesCreated = 0;
             var meshToRenderers = new Dictionary<Mesh, List<Renderer>>();
 
             foreach (Renderer r in renderers)
@@ -117,6 +118,7 @@ namespace Synthos.SynSceneOptimizer
                     }
 
                     targetMesh = SynAssetCache.SaveCachedAsset(clonedMesh, SynAssetCache.MeshesCategory, meshHash, $"{originalMesh.name}_MemOpt");
+                    clonesCreated++;
                 }
 
                 if (targetMesh != null)
@@ -133,7 +135,8 @@ namespace Synthos.SynSceneOptimizer
             }
 
             // 3. Purge unreferenced intermediate mesh clones
-            if (purgeClones)
+            // UnloadUnusedAssetsImmediate takes seconds in large projects, so only pay for it when clones were made
+            if (purgeClones && clonesCreated > 0)
             {
                 EditorUtility.UnloadUnusedAssetsImmediate();
             }
@@ -170,6 +173,7 @@ namespace Synthos.SynSceneOptimizer
                 if (mf != null)
                 {
                     SynPipelineCompactor.RecordMeshReplacement(r, mf.sharedMesh);
+                    SynPipelineCompactor.RetargetMeshColliders(r, mf.sharedMesh, mesh);
                     mf.sharedMesh = mesh;
                     EditorUtility.SetDirty(mf);
                 }
@@ -177,6 +181,7 @@ namespace Synthos.SynSceneOptimizer
             else if (r is SkinnedMeshRenderer smr)
             {
                 SynPipelineCompactor.RecordMeshReplacement(r, smr.sharedMesh);
+                SynPipelineCompactor.RetargetMeshColliders(r, smr.sharedMesh, mesh);
                 smr.sharedMesh = mesh;
                 EditorUtility.SetDirty(smr);
             }

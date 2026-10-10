@@ -2,7 +2,6 @@
     "name": "Synthos.SynSceneOptimizer.Editor",
     "rootNamespace": "Synthos.SynSceneOptimizer",
     "references": [
-        "Synthos.SynSceneOptimizer.Runtime",
         "VRC.SDKBase",
         "VRC.SDKBase.Editor",
         "Meshia.MeshSimplification.Runtime",

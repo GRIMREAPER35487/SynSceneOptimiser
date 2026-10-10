@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Experimental.Rendering;
 using UnityEngine.SceneManagement;
 
 namespace Synthos.SynSceneOptimizer
@@ -195,6 +196,11 @@ namespace Synthos.SynSceneOptimizer
             GUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Scan Target Scene:", GUILayout.Width(130));
             currentTarget = (ScanTarget)EditorGUILayout.EnumPopup(currentTarget);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(new GUIContent("Estimate Memory For:", "Active Build Target: exact sizes from the textures as currently imported. PC / Quest: sizes estimated from each texture's import settings for that platform, so Quest memory can be checked while working on PC."), GUILayout.Width(130));
+            estimatePlatform = (EstimatePlatform)EditorGUILayout.EnumPopup(estimatePlatform);
             GUILayout.EndHorizontal();
 
             GUILayout.Space(5);
@@ -603,6 +609,29 @@ namespace Synthos.SynSceneOptimizer
             catch (Exception e)
             {
                 Debug.LogError("[SYN VRAM ANALYZER] Failed to load cached report JSON: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Measures the active scene's VRAM without opening the window.
+        /// </summary>
+        public static SynVramTotals MeasureActiveScene()
+        {
+            var window = CreateInstance<SynVRAMAnalyzerWindow>();
+            try
+            {
+                ScanResults results = window.ProfileScene(SceneManager.GetActiveScene().path);
+                return new SynVramTotals
+                {
+                    Total = results.TotalBytes,
+                    Textures = results.TextureBytes,
+                    Meshes = results.MeshBytes,
+                    Environment = results.EnvBytes
+                };
+            }
+            finally
+            {
+                DestroyImmediate(window);
             }
         }
 
@@ -1450,71 +1479,210 @@ namespace Synthos.SynSceneOptimizer
             return results;
         }
 
+        private enum EstimatePlatform { ActiveBuildTarget, PC, Quest }
+        private static EstimatePlatform estimatePlatform = EstimatePlatform.ActiveBuildTarget;
+
+        private static bool IsEstimatingActivePlatform()
+        {
+            if (estimatePlatform == EstimatePlatform.ActiveBuildTarget) return true;
+            bool activeIsMobile = EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android || EditorUserBuildSettings.activeBuildTarget == BuildTarget.iOS;
+            return (estimatePlatform == EstimatePlatform.Quest) == activeIsMobile;
+        }
+
+        /// <summary>
+        /// GPU memory of a texture. For the active build target this is exact (actual format, size and mip chain;
+        /// unlike Profiler.GetRuntimeMemorySizeLong it excludes editor-only CPU copies). For the other platform it
+        /// is estimated from the texture's import settings for that platform.
+        /// </summary>
         private long EstimateTextureSize(Texture tex)
         {
             if (tex == null) return 0;
 
-            long size = UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(tex);
-            if (size > 0) return size;
-
-            int width = tex.width;
-            int height = tex.height;
-            bool mipmap = true;
-            float bpp = 8.0f;
-
-            if (tex is Texture2D t2d)
+            if (!IsEstimatingActivePlatform() && tex is Texture2D && AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(tex)) is TextureImporter importer)
             {
-                mipmap = t2d.mipmapCount > 1;
-                bpp = GetBitsPerPixel(t2d.format);
-            }
-            else if (tex is Cubemap cube)
-            {
-                bpp = GetBitsPerPixel(cube.format);
-                double byteSize = (width * height * 6.0 * bpp) / 8.0;
-                return (long)byteSize;
+                return EstimateFromImporter(importer, estimatePlatform == EstimatePlatform.Quest);
             }
 
-            double pixels = width * height;
-            if (tex is Texture2DArray arr)
+            int faces = 1;
+            int layers = 1;
+            int mipCount = 1;
+            GraphicsFormat format;
+            switch (tex)
             {
-                pixels *= arr.depth;
+                case Texture2D t2d:
+                    format = t2d.graphicsFormat;
+                    mipCount = t2d.mipmapCount;
+                    break;
+                case Cubemap cube:
+                    format = cube.graphicsFormat;
+                    mipCount = cube.mipmapCount;
+                    faces = 6;
+                    break;
+                case Texture2DArray arr:
+                    format = arr.graphicsFormat;
+                    mipCount = arr.mipmapCount;
+                    layers = arr.depth;
+                    break;
+                case Texture3D t3d:
+                    format = t3d.graphicsFormat;
+                    mipCount = t3d.mipmapCount;
+                    layers = t3d.depth;
+                    break;
+                case RenderTexture rt:
+                    format = rt.graphicsFormat;
+                    mipCount = rt.useMipMap ? rt.mipmapCount : 1;
+                    break;
+                default:
+                    return UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(tex);
             }
 
-            double bytes = (pixels * bpp) / 8.0;
-            if (mipmap)
+            if (format == GraphicsFormat.None) return UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(tex);
+
+            long total = 0;
+            for (int mip = 0; mip < Mathf.Max(1, mipCount); mip++)
             {
-                bytes *= 1.333333;
+                int w = Mathf.Max(1, tex.width >> mip);
+                int h = Mathf.Max(1, tex.height >> mip);
+                int mipLayers = tex is Texture3D ? Mathf.Max(1, layers >> mip) : layers;
+                total += (long)GraphicsFormatUtility.ComputeMipmapSize(w, h, format) * faces * mipLayers;
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// Estimates a texture's size on PC or Quest from its import settings: platform max size, chosen format
+        /// (Automatic maps to what Unity picks: DXT1/DXT5/BC5/BC6H on PC, ASTC on Android) and mipmaps.
+        /// </summary>
+        private static long EstimateFromImporter(TextureImporter importer, bool quest)
+        {
+            TextureImporterPlatformSettings ps = importer.GetPlatformTextureSettings(quest ? "Android" : "Standalone");
+            int maxSize = ps.overridden ? ps.maxTextureSize : importer.maxTextureSize;
+            TextureImporterCompression compression = ps.overridden ? ps.textureCompression : importer.textureCompression;
+
+            importer.GetSourceTextureWidthAndHeight(out int width, out int height);
+            if (importer.npotScale != TextureImporterNPOTScale.None)
+            {
+                width = Mathf.NextPowerOfTwo(width);
+                height = Mathf.NextPowerOfTwo(height);
+            }
+            int largest = Mathf.Max(width, height);
+            if (largest > maxSize)
+            {
+                width = Mathf.Max(1, width * maxSize / largest);
+                height = Mathf.Max(1, height * maxSize / largest);
             }
 
+            bool hasAlpha = importer.alphaSource != TextureImporterAlphaSource.None && importer.DoesSourceTextureHaveAlpha();
+            float bpp = ps.overridden && ps.format != TextureImporterFormat.Automatic
+                ? GetImporterFormatBitsPerPixel(ps.format)
+                : GetAutomaticBitsPerPixel(importer, compression, hasAlpha, quest);
+
+            double bytes = width * (double)height * bpp / 8.0;
+            if (importer.mipmapEnabled) bytes *= 4.0 / 3.0;
             return (long)bytes;
         }
 
+        private static float GetAutomaticBitsPerPixel(TextureImporter importer, TextureImporterCompression compression, bool hasAlpha, bool quest)
+        {
+            if (compression == TextureImporterCompression.Uncompressed) return hasAlpha ? 32f : 24f;
+
+            if (quest)
+            {
+                // Unity's Android ASTC block size by compression quality
+                switch (compression)
+                {
+                    case TextureImporterCompression.CompressedHQ: return 8f;    // ASTC 4x4
+                    case TextureImporterCompression.CompressedLQ: return 2f;    // ASTC 8x8
+                    default: return 3.56f;                                      // ASTC 6x6
+                }
+            }
+
+            if (importer.textureType == TextureImporterType.NormalMap) return 8f;           // DXT5nm / BC5
+            if (importer.textureType == TextureImporterType.SingleChannel) return 4f;       // BC4
+            if (compression == TextureImporterCompression.CompressedHQ) return 8f;          // BC7
+            return hasAlpha ? 8f : 4f;                                                       // DXT5 / DXT1
+        }
+
+        private static float GetImporterFormatBitsPerPixel(TextureImporterFormat format)
+        {
+            switch (format)
+            {
+                case TextureImporterFormat.DXT1:
+                case TextureImporterFormat.DXT1Crunched:
+                case TextureImporterFormat.BC4:
+                case TextureImporterFormat.ETC_RGB4:
+                case TextureImporterFormat.ETC2_RGB4:
+                case TextureImporterFormat.ETC2_RGB4_PUNCHTHROUGH_ALPHA:
+                    return 4f;
+                case TextureImporterFormat.DXT5:
+                case TextureImporterFormat.DXT5Crunched:
+                case TextureImporterFormat.BC5:
+                case TextureImporterFormat.BC6H:
+                case TextureImporterFormat.BC7:
+                case TextureImporterFormat.ETC2_RGBA8:
+                case TextureImporterFormat.ASTC_4x4:
+                case TextureImporterFormat.ASTC_HDR_4x4:
+                case TextureImporterFormat.Alpha8:
+                case TextureImporterFormat.R8:
+                    return 8f;
+                case TextureImporterFormat.ASTC_5x5:
+                case TextureImporterFormat.ASTC_HDR_5x5:
+                    return 5.12f;
+                case TextureImporterFormat.ASTC_6x6:
+                case TextureImporterFormat.ASTC_HDR_6x6:
+                    return 3.56f;
+                case TextureImporterFormat.ASTC_8x8:
+                case TextureImporterFormat.ASTC_HDR_8x8:
+                    return 2f;
+                case TextureImporterFormat.ASTC_10x10:
+                case TextureImporterFormat.ASTC_HDR_10x10:
+                    return 1.28f;
+                case TextureImporterFormat.ASTC_12x12:
+                case TextureImporterFormat.ASTC_HDR_12x12:
+                    return 0.89f;
+                case TextureImporterFormat.R16:
+                case TextureImporterFormat.RHalf:
+                case TextureImporterFormat.RG16:
+                    return 16f;
+                case TextureImporterFormat.RGB24:
+                    return 24f;
+                case TextureImporterFormat.RGBA32:
+                case TextureImporterFormat.ARGB32:
+                case TextureImporterFormat.RFloat:
+                case TextureImporterFormat.RGHalf:
+                    return 32f;
+                case TextureImporterFormat.RGBAHalf:
+                case TextureImporterFormat.RGFloat:
+                    return 64f;
+                case TextureImporterFormat.RGBAFloat:
+                    return 128f;
+                default:
+                    return 32f;
+            }
+        }
+
+        /// <summary>
+        /// GPU memory of a mesh: every vertex stream at its real stride plus the index buffer. Editor-side CPU
+        /// copies (which Profiler.GetRuntimeMemorySizeLong includes) are not counted.
+        /// </summary>
         private long EstimateMeshSize(Mesh mesh)
         {
             if (mesh == null) return 0;
 
-            long size = UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(mesh);
-            if (size > 0) return size;
-
-            int vertexCount = mesh.vertexCount;
-            int indexCount = 0;
-            for (int i = 0; i < mesh.subMeshCount; i++)
+            long vertexBytes = 0;
+            for (int stream = 0; stream < mesh.vertexBufferCount; stream++)
             {
-                indexCount += (int)mesh.GetIndexCount(i);
+                vertexBytes += (long)mesh.GetVertexBufferStride(stream) * mesh.vertexCount;
             }
 
-            int vertexStride = 12;
-            if (mesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.Normal)) vertexStride += 12;
-            if (mesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.Tangent)) vertexStride += 16;
-            if (mesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.Color)) vertexStride += 4;
-            if (mesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.TexCoord0)) vertexStride += 8;
-            if (mesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.TexCoord1)) vertexStride += 8;
-            if (mesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.TexCoord2)) vertexStride += 8;
-            if (mesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.TexCoord3)) vertexStride += 8;
-
+            long indexCount = 0;
+            for (int i = 0; i < mesh.subMeshCount; i++)
+            {
+                indexCount += mesh.GetIndexCount(i);
+            }
             int indexStride = mesh.indexFormat == UnityEngine.Rendering.IndexFormat.UInt32 ? 4 : 2;
 
-            return (long)vertexCount * vertexStride + (long)indexCount * indexStride;
+            return vertexBytes + indexCount * indexStride;
         }
 
         private string GetTextureFormatString(Texture tex)
@@ -1533,39 +1701,6 @@ namespace Synthos.SynSceneOptimizer
             return false;
         }
 
-        private float GetBitsPerPixel(TextureFormat format)
-        {
-            switch (format)
-            {
-                case TextureFormat.DXT1:
-                case TextureFormat.ETC_RGB4:
-                case TextureFormat.ETC2_RGB:
-                    return 4.0f;
-                case TextureFormat.DXT5:
-                case TextureFormat.BC7:
-                case TextureFormat.ETC2_RGBA8:
-                case TextureFormat.ASTC_4x4:
-                case TextureFormat.ASTC_HDR_4x4:
-                    return 8.0f;
-                case TextureFormat.ASTC_8x8:
-                case TextureFormat.ASTC_HDR_8x8:
-                    return 2.0f;
-                case TextureFormat.ASTC_6x6:
-                case TextureFormat.ASTC_HDR_6x6:
-                    return 3.56f;
-                case TextureFormat.RGB24:
-                    return 24.0f;
-                case TextureFormat.RGBA32:
-                case TextureFormat.ARGB32:
-                case TextureFormat.BGRA32:
-                    return 32.0f;
-                case TextureFormat.Alpha8:
-                    return 8.0f;
-                default:
-                    return 8.0f;
-            }
-        }
-
         private string FormatBytes(long bytes)
         {
             string[] suffixes = { "B", "KB", "MB", "GB" };
@@ -1578,6 +1713,14 @@ namespace Synthos.SynSceneOptimizer
             }
             return $"{val:F2} {suffixes[i]}";
         }
+    }
+
+    public struct SynVramTotals
+    {
+        public long Total;
+        public long Textures;
+        public long Meshes;
+        public long Environment;
     }
 
     public class SynDependencyListWindow : EditorWindow

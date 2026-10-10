@@ -30,7 +30,7 @@ namespace Synthos.SynSceneOptimizer
             if (descriptors.Length == 0) return;
 
             Debug.Log($"[SYN SCENE OPTIMIZER] Automatically optimizing scene '{scene.name}' in-place for Build.");
-            SynAutomaticOptimizerPipeline.RunPipelineOnScene(scene);
+            SynAutomaticOptimizerPipeline.RunPipelineOnScene(scene, SynRunMode.Build);
 
             // VRChat SDK asset bundle builds do not always fire IPostprocessBuildWithReport; the build blocks the
             // editor loop, so this runs once it finishes and restores any temporary importer changes.
@@ -66,7 +66,7 @@ namespace Synthos.SynSceneOptimizer
             if (descriptors.Length == 0) return;
 
             Debug.Log($"[SYN SCENE OPTIMIZER] Automatically optimizing active scene '{scene.name}' in-place for Play Mode.");
-            SynAutomaticOptimizerPipeline.RunPipelineOnScene(scene);
+            SynAutomaticOptimizerPipeline.RunPipelineOnScene(scene, SynRunMode.PlayMode);
 
             // Save VRAM report
             try
@@ -126,16 +126,30 @@ namespace Synthos.SynSceneOptimizer
 
         public static void RunPipelineOnScene(Scene scene)
         {
+            RunPipelineOnScene(scene, Application.isPlaying ? SynRunMode.PlayMode : SynRunMode.Build);
+        }
+
+        public static void RunPipelineOnScene(Scene scene, SynRunMode mode)
+        {
             SynProgressWindow progress = null;
             var failedPasses = new List<string>();
+            var report = new SynRunReport
+            {
+                Mode = mode.ToString(),
+                SceneName = scene.name,
+                Platform = SynAssetCache.GetPlatformName(),
+                Timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+            };
+            var totalTimer = System.Diagnostics.Stopwatch.StartNew();
+
             try
             {
                 SynProtectionData.BeginRun(scene);
 
-                if (!Application.isPlaying && !Application.isBatchMode)
+                if (!Application.isBatchMode)
                 {
-                    progress = SynProgressWindow.Create("SYN SCENE OPTIMIZER");
-                    progress.UpdateProgress(0.05f, "Preparing optimization pipeline...");
+                    progress = SynProgressWindow.Create(mode == SynRunMode.Preview ? "Syn Scene Optimizer - Preview" : "Syn Scene Optimizer");
+                    progress.UpdateProgress(0.02f, "Preparing optimization pipeline...");
                 }
 
                 using (new SynAssetDatabaseScope())
@@ -143,15 +157,17 @@ namespace Synthos.SynSceneOptimizer
                     // Check if optimizer settings changed since last build/run, auto-clear cache if altered
                     string currentSig = SynSceneOptimizerSettings.GetSettingsSignature();
                     string platform = SynAssetCache.GetPlatformName();
-                    string lastSigKey = "SynLastSettingsSig_" + platform;
-                    string lastSig = EditorPrefs.GetString(lastSigKey, "");
+                    // Stored per project (Library/) because the cache it guards is per project
+                    string lastSigPath = $"Library/SynSceneOptimizer/SettingsSignature_{platform}.txt";
+                    string lastSig = File.Exists(lastSigPath) ? File.ReadAllText(lastSigPath) : "";
 
                     if (!string.IsNullOrEmpty(lastSig) && lastSig != currentSig)
                     {
                         Debug.Log($"[SYN SCENE OPTIMIZER] Optimizer settings changed! Automatically clearing '{platform}' cache for fresh build.");
                         SynAssetCache.PurgeCache(null, platform);
                     }
-                    EditorPrefs.SetString(lastSigKey, currentSig);
+                    Directory.CreateDirectory(Path.GetDirectoryName(lastSigPath));
+                    File.WriteAllText(lastSigPath, currentSig);
 
                     // Clear query cache and start staging
                     SynSceneQuery.ClearCache();
@@ -172,35 +188,66 @@ namespace Synthos.SynSceneOptimizer
                     if (globalEnabled)
                     {
                         // Discovers all passes reflectively and sorts by Priority
-                        List<SynOptimizationPass> passes = GetSortedPasses();
+                        List<SynOptimizationPass> passes = GetSortedPasses().FindAll(p => p.IsEnabled);
                         int totalPasses = passes.Count;
-                        int activePassIndex = 0;
 
-                        foreach (var pass in passes)
+                        for (int index = 0; index < passes.Count; index++)
                         {
-                            if (pass.IsEnabled)
-                            {
-                                activePassIndex++;
-                                float progressVal = (float)activePassIndex / Mathf.Max(1, totalPasses);
-                                if (progress != null)
-                                {
-                                    progress.UpdateProgress(progressVal, $"[{activePassIndex}/{totalPasses}] Executing {pass.Name}...");
-                                }
+                            var pass = passes[index];
+                            var result = new SynPassResult { Name = pass.Name, Status = "OK" };
+                            report.Passes.Add(result);
 
-                                try
-                                {
-                                    pass.Execute(scene, renderers);
-                                }
-                                catch (Exception e)
-                                {
-                                    string errMsg = string.Format("Failed to execute pass {0}: {1}", pass.Name, e.ToString());
-                                    SynPipelineCompactor.LogChange(pass.Name, "ERROR: " + errMsg);
-                                    Debug.LogError("[SYN SCENE OPTIMIZER] " + errMsg);
-                                    failedPasses.Add(pass.Name);
-                                }
+                            if (report.Cancelled)
+                            {
+                                result.Status = "Cancelled";
+                                continue;
+                            }
+
+                            if (mode == SynRunMode.Preview && !pass.RunInPreview)
+                            {
+                                result.Status = "Skipped";
+                                result.Messages.Add("Not run in previews (changes things outside the scene); applied during real builds.");
+                                continue;
+                            }
+
+                            if (progress != null && progress.UpdateProgress((index + 1f) / (totalPasses + 1f), $"[{index + 1}/{totalPasses}] {pass.Name}..."))
+                            {
+                                report.Cancelled = true;
+                                result.Status = "Cancelled";
+                                continue;
+                            }
+
+                            int logStart = SynPipelineCompactor.PipelineLogSummary.Count;
+                            var passTimer = System.Diagnostics.Stopwatch.StartNew();
+                            try
+                            {
+                                pass.Execute(scene, renderers);
+                            }
+                            catch (Exception e)
+                            {
+                                string errMsg = string.Format("Failed to execute pass {0}: {1}", pass.Name, e.ToString());
+                                SynPipelineCompactor.LogChange(pass.Name, "ERROR: " + errMsg);
+                                Debug.LogError("[SYN SCENE OPTIMIZER] " + errMsg);
+                                failedPasses.Add(pass.Name);
+                                result.Status = "Failed";
+                            }
+                            result.Seconds = passTimer.Elapsed.TotalSeconds;
+                            for (int m = logStart; m < SynPipelineCompactor.PipelineLogSummary.Count; m++)
+                            {
+                                result.Messages.Add(SynPipelineCompactor.PipelineLogSummary[m].Trim());
                             }
                         }
                     }
+
+                    // A cancelled build must not ship a partially optimized scene
+                    if (report.Cancelled && mode == SynRunMode.Build)
+                    {
+                        totalTimer.Stop();
+                        report.TotalSeconds = totalTimer.Elapsed.TotalSeconds;
+                        report.Save();
+                        throw new BuildFailedException("[SYN SCENE OPTIMIZER] Build cancelled by user during scene optimization.");
+                    }
+
                     if (progress != null)
                     {
                         progress.UpdateProgress(0.98f, "Committing scene optimization changes...");
@@ -212,9 +259,17 @@ namespace Synthos.SynSceneOptimizer
 
                 // Record which cache files this run used; stale ones are removed after builds finish
                 SynCacheJanitor.RecordRun(SynAssetCache.GetSessionAssetPaths());
-                if (!Application.isPlaying)
+                if (mode == SynRunMode.Build)
                 {
                     SynCacheJanitor.ScheduleCleanupAfterBuild();
+                }
+
+                totalTimer.Stop();
+                report.TotalSeconds = totalTimer.Elapsed.TotalSeconds;
+                report.Save();
+                if (mode != SynRunMode.Preview && SynSceneOptimizerSettings.GetBool("ShowReportAfterRun", false))
+                {
+                    EditorApplication.delayCall += SynRunReportWindow.ShowReport;
                 }
 
                 if (failedPasses.Count > 0)
@@ -223,7 +278,7 @@ namespace Synthos.SynSceneOptimizer
                                      "Their changes may be incomplete. See the errors above for details.";
 
                     // A half-applied pass can ship a half-optimized world (e.g. half-palettized), so builds stop by default
-                    if (!Application.isPlaying && SynSceneOptimizerSettings.GetBool("StopBuildOnPassError", true))
+                    if (mode == SynRunMode.Build && SynSceneOptimizerSettings.GetBool("StopBuildOnPassError", true))
                     {
                         throw new BuildFailedException("[SYN SCENE OPTIMIZER] Build stopped: " + summary +
                             " Fix or disable the failing pass, or turn off 'Stop Build If A Pass Fails' in the Syn Scene Optimizer window.");
@@ -240,6 +295,65 @@ namespace Synthos.SynSceneOptimizer
                     progress.Close();
                 }
             }
+        }
+
+        /// <summary>
+        /// Dry run: saves a temporary copy of the active scene, runs the pipeline on that copy, measures VRAM before
+        /// and after, then closes and deletes the copy. The user's scene is never modified. Cached assets created
+        /// along the way are kept and reused by the next real build.
+        /// </summary>
+        public static void RunPreview()
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                EditorUtility.DisplayDialog("Preview Optimization", "Exit Play Mode before running a preview.", "OK");
+                return;
+            }
+
+            Scene source = SceneManager.GetActiveScene();
+            if (!source.IsValid() || !source.isLoaded) return;
+
+            SynVramTotals before = SynVRAMAnalyzerWindow.MeasureActiveScene();
+
+            string tempPath = SynAssetCache.TransientCachePath + "SynOptimizerPreview.unity";
+            if (!EditorSceneManager.SaveScene(source, tempPath, true))
+            {
+                Debug.LogError("[SYN SCENE OPTIMIZER] Preview: could not save a temporary copy of the scene.");
+                return;
+            }
+
+            Scene preview = default;
+            try
+            {
+                preview = EditorSceneManager.OpenScene(tempPath, OpenSceneMode.Additive);
+                SceneManager.SetActiveScene(preview);
+
+                RunPipelineOnScene(preview, SynRunMode.Preview);
+
+                SynVramTotals after = SynVRAMAnalyzerWindow.MeasureActiveScene();
+                var report = SynRunReport.Load();
+                if (report != null)
+                {
+                    report.SceneName = source.name;
+                    report.VramBeforeBytes = before.Total;
+                    report.VramAfterBytes = after.Total;
+                    report.TextureBeforeBytes = before.Textures;
+                    report.TextureAfterBytes = after.Textures;
+                    report.MeshBeforeBytes = before.Meshes;
+                    report.MeshAfterBytes = after.Meshes;
+                    report.Save();
+                }
+            }
+            finally
+            {
+                if (source.IsValid()) SceneManager.SetActiveScene(source);
+                if (preview.IsValid()) EditorSceneManager.CloseScene(preview, true);
+                AssetDatabase.DeleteAsset(tempPath);
+                SynAssetCache.ClearMemoryCache();
+                SynSceneQuery.ClearCache();
+            }
+
+            SynRunReportWindow.ShowReport();
         }
 
         private static List<SynOptimizationPass> GetSortedPasses()

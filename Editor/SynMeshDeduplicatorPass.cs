@@ -213,6 +213,7 @@ namespace Synthos.SynSceneOptimizer
                         if (mf != null)
                         {
                             SynPipelineCompactor.RecordMeshReplacement(r, mf.sharedMesh);
+                            SynPipelineCompactor.RetargetMeshColliders(r, mf.sharedMesh, masterMesh);
                             mf.sharedMesh = masterMesh;
                             EditorUtility.SetDirty(mf);
                             totalRenderersUpdated++;
@@ -221,6 +222,7 @@ namespace Synthos.SynSceneOptimizer
                     else if (r is SkinnedMeshRenderer smr)
                     {
                         SynPipelineCompactor.RecordMeshReplacement(r, smr.sharedMesh);
+                        SynPipelineCompactor.RetargetMeshColliders(r, smr.sharedMesh, masterMesh);
                         smr.sharedMesh = masterMesh;
                         EditorUtility.SetDirty(smr);
                         totalRenderersUpdated++;

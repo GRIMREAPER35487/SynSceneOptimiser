@@ -20,6 +20,7 @@ namespace Synthos.SynSceneOptimizer
         public override string Category => "Lighting & Probes";
         public override int Priority => 10;
         public override string Tab => "General Fixes";
+        public override bool RunInPreview => false; // Acts on reflection probes in every open scene
 
         private static bool isHooked = false;
         private static double lastBakeTriggerTime = 0.0;
