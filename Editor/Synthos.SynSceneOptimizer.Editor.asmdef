@@ -9,6 +9,8 @@
         "UdonSharp.Runtime",
         "UdonSharp.Editor",
         "VRC.Udon",
+        "VRC.Udon.Editor",
+        "VRC.Udon.Serialization.OdinSerializer",
         "Meshia.MeshSimplification.Runtime",
         "Meshia.MeshSimplification.Editor"
     ],
