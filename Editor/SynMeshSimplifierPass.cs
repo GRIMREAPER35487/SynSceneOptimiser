@@ -537,7 +537,7 @@ namespace Synthos.SynSceneOptimizer
             autoTunedTierRatios = null;
             if (isMobileMode && useSceneCap && useDynamicTiers)
             {
-                AutoTuneTierRatios(sceneTriangleCap);
+                AutoTuneTierRatios(sceneTriangleCap, scene);
             }
 
             // Extract all meshes and game objects from the local preserve list
@@ -1048,7 +1048,7 @@ namespace Synthos.SynSceneOptimizer
             autoTunedTierRatios = null;
             if (isMobileMode && useSceneCap && useDynamicTiers)
             {
-                AutoTuneTierRatios(sceneTriangleCap);
+                AutoTuneTierRatios(sceneTriangleCap, scene);
             }
 
             // Extract all meshes and game objects from the local preserve list
@@ -1361,9 +1361,8 @@ namespace Synthos.SynSceneOptimizer
             return path;
         }
 
-        private static void AutoTuneTierRatios(int targetCap)
+        private static void AutoTuneTierRatios(int targetCap, Scene scene)
         {
-            Scene scene = SceneManager.GetActiveScene();
             List<Renderer> renderers = SynSceneQuery.GetAllRenderers(scene);
 
             int minTriangleCount = SynSceneOptimizerSettings.GetInt("MeshSimplifier_Mobile_MinTriangleCount", 4000);

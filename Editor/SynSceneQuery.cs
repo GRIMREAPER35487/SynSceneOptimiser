@@ -10,65 +10,37 @@ namespace Synthos.SynSceneOptimizer
         private static readonly List<Renderer> CachedRenderers = new List<Renderer>();
         private static bool isCached = false;
 
+        // Scene the cached renderer list belongs to; a request for a different scene rebuilds it
+        private static Scene cachedScene;
+
+        /// <summary>
+        /// Mesh and skinned renderers of exactly this scene (active and inactive). Other loaded scenes are never
+        /// included: a preview runs on a temporary copy while the user's scene stays open, and must not touch it.
+        /// </summary>
         public static List<Renderer> GetAllRenderers(Scene scene)
         {
-            if (isCached && CachedRenderers.Count > 0)
+            if (isCached && cachedScene == scene)
             {
                 return CachedRenderers;
             }
 
             CachedRenderers.Clear();
-            var found = new HashSet<Renderer>();
-
-            // 1. Scan from provided scene
-            if (scene.IsValid() && scene.isLoaded)
-            {
-                foreach (GameObject root in scene.GetRootGameObjects())
-                {
-                    if (root == null) continue;
-                    foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
-                    {
-                        if (r != null && (r is MeshRenderer || r is SkinnedMeshRenderer))
-                        {
-                            found.Add(r);
-                        }
-                    }
-                }
-            }
-
-            // 2. Also scan all loaded scenes in the Hierarchy
-            for (int s = 0; s < SceneManager.sceneCount; s++)
-            {
-                Scene sc = SceneManager.GetSceneAt(s);
-                if (!sc.isLoaded) continue;
-                foreach (GameObject root in sc.GetRootGameObjects())
-                {
-                    if (root == null) continue;
-                    foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
-                    {
-                        if (r != null && (r is MeshRenderer || r is SkinnedMeshRenderer))
-                        {
-                            found.Add(r);
-                        }
-                    }
-                }
-            }
-
-            // 3. Fallback: Find in active scene hierarchy
-            if (found.Count == 0)
-            {
-                Renderer[] allRenderers = Resources.FindObjectsOfTypeAll<Renderer>();
-                foreach (Renderer r in allRenderers)
-                {
-                    if (r != null && (r is MeshRenderer || r is SkinnedMeshRenderer) && !EditorUtility.IsPersistent(r.gameObject))
-                    {
-                        found.Add(r);
-                    }
-                }
-            }
-
-            CachedRenderers.AddRange(found);
+            cachedScene = scene;
             isCached = true;
+
+            if (!scene.IsValid() || !scene.isLoaded) return CachedRenderers;
+
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                if (root == null) continue;
+                foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r != null && (r is MeshRenderer || r is SkinnedMeshRenderer))
+                    {
+                        CachedRenderers.Add(r);
+                    }
+                }
+            }
             return CachedRenderers;
         }
 
