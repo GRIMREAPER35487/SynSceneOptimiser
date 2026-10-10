@@ -2,7 +2,7 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
-## [Unreleased]
+## [1.1.0-beta.7] - 2026-10-10
 
 ### Added
 - **Canvas Distance Culling:** hides world canvases when the local player is far away and shows them again on approach (Canvas component and UI collider only; scripts keep running; nothing synced). Set up from the UI Audit with "Add Distance Culling to Suggested Canvases" or per canvas, with an editable distance per canvas. Canvases switched by an animation or by a script holding the Canvas component are not suggested, and adding one shows a warning.
