@@ -5,6 +5,10 @@
         "VRC.SDKBase",
         "VRC.SDKBase.Editor",
         "UnityEngine.UI",
+        "Synthos.SynSceneOptimizer.Runtime",
+        "UdonSharp.Runtime",
+        "UdonSharp.Editor",
+        "VRC.Udon",
         "Meshia.MeshSimplification.Runtime",
         "Meshia.MeshSimplification.Editor"
     ],

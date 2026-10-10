@@ -18,6 +18,9 @@ namespace Synthos.SynSceneOptimizer
         private bool hideInactive;
         private readonly HashSet<Canvas> expanded = new HashSet<Canvas>();
 
+        // Scene edits are applied after the list is drawn, so the list never changes mid-draw
+        private System.Action pendingEdit;
+
         [MenuItem("Window/Synthos/UI Audit")]
         public static void ShowWindow()
         {
@@ -68,10 +71,65 @@ namespace Synthos.SynSceneOptimizer
 
             EditorGUILayout.HelpBox("Draw counts are estimates from material and texture changes in draw order (Unity can sometimes merge a few more). Use them to rank canvases; the Frame Debugger has the exact numbers.", MessageType.None);
 
+            DrawDistanceCulling(shown);
+
             DrawHeader();
             scroll = EditorGUILayout.BeginScrollView(scroll);
             foreach (SynCanvasReport report in shown) DrawRow(report);
             EditorGUILayout.EndScrollView();
+
+            if (pendingEdit != null)
+            {
+                var edit = pendingEdit;
+                pendingEdit = null;
+                edit();
+                Scan();
+                GUIUtility.ExitGUI();
+            }
+        }
+
+        private void DrawDistanceCulling(List<SynCanvasReport> shown)
+        {
+            Scene scene = SceneManager.GetActiveScene();
+            int managed = reports.Count(r => r.CullDistance >= 0f);
+            var suggested = shown.Where(r => r.IsSuggestedForCulling).ToList();
+
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.LabelField("Distance Culling", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                managed > 0
+                    ? $"{managed} canvas(es) are hidden when the player is far away. Change distances per canvas below."
+                    : "Off: no canvases set up yet. Hidden canvases skip drawing, rebuilding and laser-pointer checks.",
+                EditorStyles.wordWrappedMiniLabel);
+
+            using (new EditorGUI.DisabledScope(EditorApplication.isPlaying))
+            {
+                EditorGUILayout.BeginHorizontal();
+                if (suggested.Count > 0 && GUILayout.Button(new GUIContent($"Add Distance Culling to {suggested.Count} Suggested Canvases",
+                        "Active world-space canvases that no animation or script switches on and off. Each gets a distance of ten times its size, at least 10 m.")))
+                {
+                    pendingEdit = () => SynCanvasCullerSetup.AddCanvases(scene, suggested.Select(r => r.Canvas));
+                }
+                if (managed > 0 && GUILayout.Button(new GUIContent("Refresh", "Re-measure managed canvases after resizing them, and drop deleted ones."), GUILayout.Width(70)))
+                {
+                    pendingEdit = () => SynCanvasCullerSetup.Refresh(scene);
+                }
+                if (managed > 0 && GUILayout.Button("Select Manager", GUILayout.Width(110)))
+                {
+                    var culler = SynCanvasCullerSetup.FindCuller(scene);
+                    if (culler != null)
+                    {
+                        Selection.activeGameObject = culler.gameObject;
+                        EditorGUIUtility.PingObject(culler.gameObject);
+                    }
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+            if (EditorApplication.isPlaying)
+            {
+                EditorGUILayout.LabelField("Exit Play Mode to change distance culling.", EditorStyles.miniLabel);
+            }
+            EditorGUILayout.EndVertical();
         }
 
         private static void DrawTotals(List<SynCanvasReport> shown)
@@ -94,6 +152,7 @@ namespace Synthos.SynSceneOptimizer
             GUILayout.Label("Textures", EditorStyles.miniBoldLabel, GUILayout.Width(60));
             GUILayout.Label("Masks", EditorStyles.miniBoldLabel, GUILayout.Width(45));
             GUILayout.Label("Size (m)", EditorStyles.miniBoldLabel, GUILayout.Width(80));
+            GUILayout.Label("Hide at", EditorStyles.miniBoldLabel, GUILayout.Width(55));
             GUILayout.Label("", GUILayout.Width(60));
             EditorGUILayout.EndHorizontal();
         }
@@ -119,6 +178,7 @@ namespace Synthos.SynSceneOptimizer
             GUILayout.Label(report.TextureCount.ToString(), GUILayout.Width(60));
             GUILayout.Label(report.MaskCount.ToString(), GUILayout.Width(45));
             GUILayout.Label(report.RenderMode == RenderMode.WorldSpace ? $"{report.WorldSize.x:0.##} x {report.WorldSize.y:0.##}" : "screen", GUILayout.Width(80));
+            GUILayout.Label(report.CullDistance >= 0f ? $"{report.CullDistance:0.#} m" : "-", GUILayout.Width(55));
             if (GUILayout.Button("Select", EditorStyles.miniButton, GUILayout.Width(60)))
             {
                 Selection.activeGameObject = report.Canvas.gameObject;
@@ -138,11 +198,13 @@ namespace Synthos.SynSceneOptimizer
 
             var toggledBy = new List<string>();
             if (report.IsAnimated) toggledBy.Add("an animation");
-            if (report.IsScriptReferenced) toggledBy.Add("a script or button event");
+            if (report.IsScriptReferenced) toggledBy.Add(report.IsCanvasComponentReferenced ? "a script or button event (the Canvas component itself)" : "a script or button event");
             if (toggledBy.Count > 0)
             {
                 EditorGUILayout.LabelField("Referenced by " + string.Join(" and ", toggledBy) + " (may be switched on and off at runtime)", EditorStyles.miniLabel);
             }
+
+            DrawCullingControls(report);
 
             if (report.Warnings.Count == 0)
             {
@@ -154,6 +216,40 @@ namespace Synthos.SynSceneOptimizer
             }
             EditorGUI.indentLevel--;
             EditorGUILayout.Space(2);
+        }
+
+        private void DrawCullingControls(SynCanvasReport report)
+        {
+            if (!report.CanDistanceCull) return;
+            Scene scene = SceneManager.GetActiveScene();
+            Canvas canvas = report.Canvas;
+
+            using (new EditorGUI.DisabledScope(EditorApplication.isPlaying))
+            {
+                EditorGUILayout.BeginHorizontal();
+                if (report.CullDistance >= 0f)
+                {
+                    float newDistance = EditorGUILayout.DelayedFloatField(new GUIContent("Hide beyond (m)", "Distance from the nearest edge of the canvas. It shows again when you come back within this distance."), report.CullDistance);
+                    if (!Mathf.Approximately(newDistance, report.CullDistance))
+                    {
+                        pendingEdit = () => SynCanvasCullerSetup.SetDistance(scene, canvas, newDistance);
+                    }
+                    if (GUILayout.Button("Remove", EditorStyles.miniButton, GUILayout.Width(70)))
+                    {
+                        pendingEdit = () => SynCanvasCullerSetup.RemoveCanvas(scene, canvas);
+                    }
+                }
+                else if (GUILayout.Button(new GUIContent($"Add Distance Culling ({SynCanvasCullerSetup.SuggestDistance(canvas):0} m)"), EditorStyles.miniButton, GUILayout.Width(220)))
+                {
+                    pendingEdit = () => SynCanvasCullerSetup.AddCanvases(scene, new[] { canvas });
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+
+            if (report.CullDistance < 0f && (report.IsAnimated || report.IsCanvasComponentReferenced))
+            {
+                EditorGUILayout.HelpBox("Something switches this Canvas on and off at runtime. Distance culling would turn it back on when you walk close, even if that script or animation hid it. Only add it if that's fine.", MessageType.Warning);
+            }
         }
     }
 }
