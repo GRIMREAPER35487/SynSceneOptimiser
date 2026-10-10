@@ -4,6 +4,10 @@ All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versio
 
 ## [Unreleased]
 
+### Added
+- **UI Optimizer pass:** stops drawing fully transparent UI graphics, turns off Raycast Target on graphics nothing can click, and flattens elements sitting less than 0.5 mm off their canvas so they batch again. Each fix has its own toggle; build, Play Mode and preview copies only.
+- **UI Audit window** (Window → Synthos → UI Audit, or "Configure / Open UI Audit..." on the UI Optimizer pass): every canvas in the open scene with estimated draw calls, graphics, textures, masks, shaders and size, and what makes it expensive. Read-only.
+
 ### Fixed
 - GPU Instancing Enabler's "Preview Eligible Materials" and "Apply to Material Assets on Disk" buttons now use the same rule as the build (renderers sharing both mesh and material), so they no longer list or change materials the build would skip.
 
