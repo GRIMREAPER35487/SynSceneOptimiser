@@ -4,6 +4,7 @@
     "references": [
         "VRC.SDKBase",
         "VRC.SDKBase.Editor",
+        "UnityEngine.UI",
         "Meshia.MeshSimplification.Runtime",
         "Meshia.MeshSimplification.Editor"
     ],
