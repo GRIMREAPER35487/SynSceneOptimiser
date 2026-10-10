@@ -24,6 +24,11 @@ namespace Synthos.SynSceneOptimizer
         private static bool isHooked = false;
         private static double lastBakeTriggerTime = 0.0;
 
+        // Probes that were enabled right before the last Bakery bake. Bakery can leave probes disabled after a
+        // bake; only these are restored, so probes the user disabled on purpose stay disabled.
+        // SessionState survives the domain reloads that happen around bakes.
+        private const string EnabledBeforeBakeKey = "Synthos.SynSceneOptimizer.ProbesEnabledBeforeBake";
+
         static SynBakeryReflectionProbeBakerPass()
         {
             // Delay initialization slightly to let editor and assemblies settle
@@ -114,8 +119,13 @@ namespace Synthos.SynSceneOptimizer
             bool isEnabled = SynSceneOptimizerSettings.GetBool("Pass_BakeryReflectionProbeBakerPass_Enabled", true);
             if (!isEnabled) return;
 
-            // Make sure Bakery's own project setting is set so it doesn't suppress probes
-            SetBakeryAutoRenderRefProbes(true);
+            RecordEnabledProbes();
+
+            // Make sure Bakery's own project setting is set so it doesn't suppress probes (only if the user opted in)
+            if (SynSceneOptimizerSettings.GetBool("BakeryRefl_SyncProjectSettings", true))
+            {
+                SetBakeryAutoRenderRefProbes(true);
+            }
         }
 
         private static void OnBakeryFinishedRender(object sender, EventArgs e)
@@ -167,8 +177,8 @@ namespace Synthos.SynSceneOptimizer
 
         public static void TriggerBakeryReflectionProbeBake()
         {
-            // 1. Re-enable any reflection probes Bakery might have left disabled
-            ReEnableAllReflectionProbes();
+            // 1. Re-enable reflection probes the last Bakery bake left disabled (never ones the user disabled)
+            RestoreProbesDisabledByBake();
 
             Type ftRenderType = GetBakeryRenderType();
             if (ftRenderType != null)
@@ -232,6 +242,53 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
+        private static string GetProbeKey(ReflectionProbe probe)
+        {
+            Transform t = probe.transform;
+            string path = t.name;
+            while (t.parent != null)
+            {
+                t = t.parent;
+                path = t.name + "/" + path;
+            }
+            return probe.gameObject.scene.name + ":" + path;
+        }
+
+        private static void RecordEnabledProbes()
+        {
+            var keys = new List<string>();
+            foreach (var probe in UnityEngine.Object.FindObjectsOfType<ReflectionProbe>())
+            {
+                if (probe != null && probe.enabled) keys.Add(GetProbeKey(probe));
+            }
+            SessionState.SetString(EnabledBeforeBakeKey, string.Join("\n", keys));
+        }
+
+        /// <summary>
+        /// Re-enables only probes that were enabled before the last Bakery bake and are disabled now, then clears
+        /// the record. Probes the user disabled themselves are never touched.
+        /// </summary>
+        public static int RestoreProbesDisabledByBake()
+        {
+            string recorded = SessionState.GetString(EnabledBeforeBakeKey, "");
+            if (string.IsNullOrEmpty(recorded)) return 0;
+
+            var enabledBefore = new HashSet<string>(recorded.Split('\n'));
+            int restoredCount = 0;
+            foreach (var probe in UnityEngine.Object.FindObjectsOfType<ReflectionProbe>())
+            {
+                if (probe != null && !probe.enabled && enabledBefore.Contains(GetProbeKey(probe)))
+                {
+                    probe.enabled = true;
+                    EditorUtility.SetDirty(probe);
+                    restoredCount++;
+                }
+            }
+
+            SessionState.EraseString(EnabledBeforeBakeKey);
+            return restoredCount;
+        }
+
         public static int ReEnableAllReflectionProbes()
         {
             int reenabledCount = 0;
@@ -292,7 +349,7 @@ namespace Synthos.SynSceneOptimizer
                 TriggerBakeryReflectionProbeBake();
             }
 
-            if (GUILayout.Button("Re-Enable Probes", GUILayout.Height(24), GUILayout.Width(130)))
+            if (GUILayout.Button(new GUIContent("Re-Enable All Probes", "Turns on every disabled reflection probe in the open scenes, including ones you disabled on purpose."), GUILayout.Height(24), GUILayout.Width(150)))
             {
                 int count = ReEnableAllReflectionProbes();
                 Debug.Log($"[SYN SCENE OPTIMIZER] Re-enabled {count} reflection probes in scene.");
@@ -302,11 +359,12 @@ namespace Synthos.SynSceneOptimizer
 
         public override void Execute(Scene scene, List<Renderer> renderers)
         {
-            // Pipeline execution: Ensure any reflection probes disabled by previous bakes are re-enabled
-            int reenabled = ReEnableAllReflectionProbes();
-            if (reenabled > 0)
+            // Only finish a restore that a Bakery bake left pending (e.g. the bake was interrupted before its
+            // completion event). Probes disabled on purpose, or toggled at runtime by Udon, are left as they are.
+            int restored = RestoreProbesDisabledByBake();
+            if (restored > 0)
             {
-                SynPipelineCompactor.LogChange("Reflection Probes", $"Re-enabled {reenabled} reflection probes.");
+                SynPipelineCompactor.LogChange("Reflection Probes", $"Re-enabled {restored} reflection probes left disabled by the last Bakery bake.");
             }
         }
     }

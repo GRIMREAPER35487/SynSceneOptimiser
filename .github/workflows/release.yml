@@ -33,7 +33,7 @@ jobs:
       - name: Create release zip
         run: |
           mkdir -p build
-          zip -r "build/${{ steps.version.outputs.ZIP_NAME }}" . -x ".git/*" ".github/*" "build/*" ".gitignore" "*.old" "*.old.meta"
+          zip -r "build/${{ steps.version.outputs.ZIP_NAME }}" . -x ".git/*" ".github/*" "build/*" ".gitignore" "*.old" "*.old.meta" "SynProtectionSettings.asset" "SynProtectionSettings.asset.meta"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -42,7 +42,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.TAG_NAME }}
           generate_release_notes: true
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
 
       - name: Trigger VPM Listing Rebuild
         continue-on-error: true
