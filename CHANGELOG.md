@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [Unreleased]
+
+### Changed
+- **Skip Lightmapped Meshes is off by default again.** Turning it on in beta.1 stopped most meshes in fully baked worlds from being simplified, which raised triangle count and GPU cost. Turn it on if you see smeared shadows or dark seams after optimizing.
+
 ## [1.1.0-beta.4] - 2026-10-09
 
 ### Fixed
