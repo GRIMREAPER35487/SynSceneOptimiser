@@ -226,8 +226,8 @@ namespace Synthos.SynSceneOptimizer
             EditorGUI.indentLevel--;
 
             EditorGUILayout.Space(5);
-            bool skipLightmapped = SynSceneOptimizerSettings.GetBool("MeshSimplifier_SkipLightmapped", true);
-            bool newSkipLightmapped = EditorGUILayout.Toggle(new GUIContent("Skip Lightmapped Meshes", "Never decimate renderers that use baked lightmaps. Decimating after a bake distorts the lightmap UVs and causes smearing or black seams."), skipLightmapped);
+            bool skipLightmapped = SynSceneOptimizerSettings.GetBool("MeshSimplifier_SkipLightmapped", false);
+            bool newSkipLightmapped = EditorGUILayout.Toggle(new GUIContent("Skip Lightmapped Meshes", "Never decimate renderers that use baked lightmaps. Off by default: most lightmapped meshes simplify cleanly. Turn on if you see smeared shadows or dark seams after optimizing."), skipLightmapped);
             if (newSkipLightmapped != skipLightmapped)
             {
                 SynSceneOptimizerSettings.SetBool("MeshSimplifier_SkipLightmapped", newSkipLightmapped);
@@ -608,7 +608,7 @@ namespace Synthos.SynSceneOptimizer
 
             bool usePreserveRatio = SynSceneOptimizerSettings.GetBool("MeshSimplifier_UsePreserveRatio", false);
             float preserveRatio = SynSceneOptimizerSettings.GetFloat("MeshSimplifier_PreserveRatio", 0.80f);
-            bool skipLightmapped = SynSceneOptimizerSettings.GetBool("MeshSimplifier_SkipLightmapped", true);
+            bool skipLightmapped = SynSceneOptimizerSettings.GetBool("MeshSimplifier_SkipLightmapped", false);
 
             // Gather all active scene meshes and group by original unique Mesh
             var meshToRenderers = new Dictionary<Mesh, List<Renderer>>();
