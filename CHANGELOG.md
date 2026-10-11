@@ -2,6 +2,16 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0] - 2026-10-11
+
+Stable release of everything in the 1.1.0 betas below. Highlights:
+- Texture downscaling keeps compression; normal maps, mip streaming, audio and protection fixed and made non-destructive.
+- Per-project settings, presets, Preview (Dry Run), run report and cancelable progress.
+- Mesh fixes (Skip/Preserve lists, colliders, LOD groups, UV3/vertex colours), lightmapped meshes simplified by default.
+- Merged Mochie palette materials render with the right metallic, smoothness and emission.
+- New UI tools: UI Optimizer pass, UI Audit, canvas distance culling and UI sprite atlases.
+- New material tools: Material Audit and Material Deduplicator.
+
 ## [1.1.0-beta.16] - 2026-10-10
 
 ### Fixed
