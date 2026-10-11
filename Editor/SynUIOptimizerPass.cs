@@ -15,7 +15,7 @@ namespace Synthos.SynSceneOptimizer
     {
         public override string Id => "SynUIOptimizerPass";
         public override string Name => "UI Optimizer";
-        public override string Description => "Cheaper world UI: skips drawing fully transparent graphics, turns off Raycast Target on graphics that can't be clicked, and flattens tiny Z offsets so canvases batch better. Open the UI Audit to see what each canvas costs.";
+        public override string Description => "Cheaper world UI: skips drawing fully transparent graphics, turns off Raycast Target on graphics that can't be clicked, flattens tiny Z offsets so canvases batch better, and can pack UI sprites into atlases. Open the UI Audit to see what each canvas costs.";
         public override string Category => "UI";
         public override int Priority => 60;
         public override string Tab => "Optimizers";
@@ -23,12 +23,14 @@ namespace Synthos.SynSceneOptimizer
         private const string CullTransparentKey = "UIOptimizer_CullTransparent";
         private const string RaycastTargetsKey = "UIOptimizer_RaycastTargets";
         private const string FlattenZKey = "UIOptimizer_FlattenZ";
+        private const string SpriteAtlasKey = "UIOptimizer_SpriteAtlas";
 
         public override void Execute(Scene scene, List<Renderer> renderers)
         {
             bool cullTransparent = SynSceneOptimizerSettings.GetBool(CullTransparentKey, true);
             bool raycastTargets = SynSceneOptimizerSettings.GetBool(RaycastTargetsKey, true);
             bool flattenZ = SynSceneOptimizerSettings.GetBool(FlattenZKey, true);
+            bool spriteAtlas = SynSceneOptimizerSettings.GetBool(SpriteAtlasKey, false);
 
             int culled = 0, transparentNow = 0, raycastsOff = 0, flattened = 0, canvasCount = 0;
             foreach (Canvas canvas in SynUIAnalysis.GetCanvases(scene))
@@ -49,6 +51,17 @@ namespace Synthos.SynSceneOptimizer
             SynPipelineCompactor.LogChange(
                 "UI Optimizer",
                 $"Checked {canvasCount} canvases: {culled} graphics now skip drawing while fully transparent ({transparentNow} are transparent right now), turned off Raycast Target on {raycastsOff} unclickable graphics, flattened {flattened} tiny Z offsets.");
+
+            if (spriteAtlas)
+            {
+                bool mobile = SynAssetCache.GetCurrentTargetPlatform() != SynTargetPlatform.PC;
+                var atlas = SynUISpriteAtlas.Run(scene, mobile ? 1024 : 2048);
+                SynPipelineCompactor.LogChange(
+                    "UI Optimizer",
+                    atlas.SpritesPacked > 0
+                        ? $"Packed {atlas.SpritesPacked} UI sprites into {atlas.Atlases} atlas(es), used by {atlas.ImagesChanged} images. {atlas.SpritesSkipped} sprites were left alone (swapped at runtime, tiled, custom shader, larger than {SynUISpriteAtlas.MaxSpriteSize} px or used elsewhere)."
+                        : $"No UI sprites to pack ({atlas.SpritesSkipped} left alone: swapped at runtime, tiled, custom shader, larger than {SynUISpriteAtlas.MaxSpriteSize} px or used elsewhere).");
+            }
 
             // A short cost summary, so the report shows which canvases are worth a closer look
             var top = SynUIAnalysis.AnalyzeScene(scene, findRuntimeToggles: false).Where(r => r.IsActive).Take(3).ToList();
@@ -85,13 +98,16 @@ namespace Synthos.SynSceneOptimizer
                 "Turns on Cull Transparent Mesh, so graphics at zero alpha are not drawn. Fades still work and clicks still register. Mask graphics and custom UI shaders are left alone.");
             DrawToggle(RaycastTargetsKey, "Raycast Target Off When Unclickable",
                 "Turns off Raycast Target on text and images that no button, toggle, slider or scroll view uses. Graphics overlapping a clickable element are kept, since they may block clicks on purpose. Saves CPU only.");
+            DrawToggle(SpriteAtlasKey, "Pack UI Sprites into Atlases (Beta)",
+                $"Packs the sprites of UI images into shared atlases so a panel's images can draw together instead of one draw per texture. Sprites swapped at runtime (scripts, Udon, button sprite swaps, animations), tiled images, custom UI shaders and sprites over {SynUISpriteAtlas.MaxSpriteSize} px are left alone. Atlases are cached per platform (up to 2048 on PC, 1024 on Quest).",
+                false);
             DrawToggle(FlattenZKey, "Flatten Tiny Z Offsets",
                 $"Moves elements less than {SynUIAnalysis.TinyZOffsetMeters * 1000f:0.#} mm in front of or behind their canvas back onto it, so they batch with the rest. Larger offsets, tilted and animated elements are left alone.");
         }
 
-        private static void DrawToggle(string key, string label, string tooltip)
+        private static void DrawToggle(string key, string label, string tooltip, bool defaultValue = true)
         {
-            bool value = SynSceneOptimizerSettings.GetBool(key, true);
+            bool value = SynSceneOptimizerSettings.GetBool(key, defaultValue);
             bool newValue = EditorGUILayout.Toggle(new GUIContent(label, tooltip), value);
             if (newValue != value) SynSceneOptimizerSettings.SetBool(key, newValue);
         }

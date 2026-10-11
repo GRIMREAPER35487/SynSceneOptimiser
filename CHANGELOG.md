@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.9] - 2026-10-10
+
+### Added
+- **Pack UI Sprites into Atlases** (UI Optimizer, opt-in): packs UI Image sprites into shared atlases (up to 2048 on PC, 1024 on Quest) so images on a canvas can batch together. Atlases are PNGs in the per-platform cache, imported as multi-sprite textures with the source's filter mode, colour space, pixels-per-unit and compression, with 9-slice borders, pivots and edge padding kept. Sprites anything else uses or swaps at runtime are never packed, so both versions don't ship.
+
 ## [1.1.0-beta.8] - 2026-10-10
 
 ### Fixed
