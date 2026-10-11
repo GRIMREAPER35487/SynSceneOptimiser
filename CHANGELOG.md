@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.10] - 2026-10-10
+
+### Added
+- **Include Sprites Scripts Use** (under Pack UI Sprites into Atlases, on by default): sprites held by scripts, Udon/UdonSharp variables and button sprite swaps are packed too, and those references are pointed at the atlas copies on the build copy (UdonSharp fields and the UdonBehaviour reference list both), so swaps keep batching, sprite comparisons in scripts still match and the original sprite doesn't ship. Sprites changed by animations, used by SpriteRenderers or held by protected objects are still left alone.
+
 ## [1.1.0-beta.9] - 2026-10-10
 
 ### Added
