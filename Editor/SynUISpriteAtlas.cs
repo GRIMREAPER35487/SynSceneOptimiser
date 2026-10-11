@@ -16,7 +16,7 @@ namespace Synthos.SynSceneOptimizer
     /// </summary>
     public static class SynUISpriteAtlas
     {
-        private const string AtlasHashTag = "UIAtlas_v2"; // v2: rectangular, trimmed atlases
+        private const string AtlasHashTag = "UIAtlas_v3"; // v3: full sprite rect kept (tight sprites' trimmed margins restored); v2: rectangular atlases
         private const int Padding = 4;      // gap around each sprite, half of it filled with copied edge pixels
         private const int Extrude = 2;
         public const int MaxSpriteSize = 512;
@@ -93,7 +93,7 @@ namespace Synthos.SynSceneOptimizer
             foreach (var group in groups)
             {
                 var sprites = group
-                    .OrderByDescending(s => Mathf.CeilToInt(s.textureRect.height))
+                    .OrderByDescending(s => Mathf.CeilToInt(s.rect.height))
                     .ThenBy(s => GetFirstCanvasPath(spriteUsers[s]))
                     .ToList();
 
@@ -222,8 +222,8 @@ namespace Synthos.SynSceneOptimizer
             if (sprite.packed) return "already in an atlas";
             Texture2D tex = sprite.texture;
             if (tex == null || sprite.associatedAlphaSplitTexture != null) return "without a usable texture";
-            Rect r = sprite.textureRect;
-            if (r.width < 1 || r.height < 1) return "without a usable texture";
+            Rect r = sprite.rect;
+            if (r.width < 1 || r.height < 1 || sprite.textureRect.width < 1 || sprite.textureRect.height < 1) return "without a usable texture";
             if (r.width > MaxSpriteSize || r.height > MaxSpriteSize) return $"larger than {MaxSpriteSize} px";
             if (SynProtectionData.IsProtected(tex)) return "with a protected texture";
             return null;
@@ -345,8 +345,10 @@ namespace Synthos.SynSceneOptimizer
 
             foreach (Sprite sprite in sprites)
             {
-                int w = Mathf.CeilToInt(sprite.textureRect.width) + Padding * 2;
-                int h = Mathf.CeilToInt(sprite.textureRect.height) + Padding * 2;
+                // The full sprite rect: tight sprites only store their trimmed pixels (textureRect), but they are
+                // drawn over the whole rect, so the atlas cell must keep the transparent margin too
+                int w = Mathf.CeilToInt(sprite.rect.width) + Padding * 2;
+                int h = Mathf.CeilToInt(sprite.rect.height) + Padding * 2;
                 if (w > width || h > height)
                 {
                     rest.Add(sprite);
@@ -438,19 +440,27 @@ namespace Synthos.SynSceneOptimizer
                     sourcePixels[texture] = source;
                 }
 
-                Rect r = p.Sprite.textureRect;
-                int sx = Mathf.FloorToInt(r.x), sy = Mathf.FloorToInt(r.y);
+                // The stored pixels (textureRect) sit at textureRectOffset inside the full sprite rect; the rest of
+                // the cell is the transparent margin Unity trimmed off tight sprites
+                Rect tr = p.Sprite.textureRect;
+                Vector2 offset = p.Sprite.textureRectOffset;
+                int sx = Mathf.FloorToInt(tr.x), sy = Mathf.FloorToInt(tr.y);
+                int tw = Mathf.FloorToInt(tr.width), th = Mathf.FloorToInt(tr.height);
+                int ox = Mathf.RoundToInt(offset.x), oy = Mathf.RoundToInt(offset.y);
                 int w = p.Rect.width, h = p.Rect.height;
 
-                // The sprite itself plus its edge pixels copied outwards, so bilinear filtering at the edges
-                // samples the sprite's own colours instead of its neighbours
+                // The cell plus its edge pixels copied outwards, so bilinear filtering at the edges samples the
+                // sprite's own colours instead of its neighbours
                 for (int y = -Extrude; y < h + Extrude; y++)
                 {
-                    int srcRow = (sy + Mathf.Clamp(y, 0, h - 1)) * source.Width;
+                    int cy = Mathf.Clamp(y, 0, h - 1) - oy;
                     int dstRow = (p.Rect.y + y) * width;
                     for (int x = -Extrude; x < w + Extrude; x++)
                     {
-                        output[dstRow + p.Rect.x + x] = source.Pixels[srcRow + sx + Mathf.Clamp(x, 0, w - 1)];
+                        int cx = Mathf.Clamp(x, 0, w - 1) - ox;
+                        output[dstRow + p.Rect.x + x] = cx >= 0 && cy >= 0 && cx < tw && cy < th
+                            ? source.Pixels[(sy + cy) * source.Width + sx + cx]
+                            : new Color32(0, 0, 0, 0);
                     }
                 }
             }

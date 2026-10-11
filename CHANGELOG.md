@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.16] - 2026-10-10
+
+### Fixed
+- **UI icons came out too big with the sprite atlas** (e.g. ProTV controls). Tight sprites only store their pixels without the transparent margin, and the atlas made that trimmed part the whole sprite, stretching it over the margin. Atlas sprites now keep the full original rect with the pixels at their original offset. Atlases are rebuilt once.
+
 ## [1.1.0-beta.15] - 2026-10-10
 
 ### Added
