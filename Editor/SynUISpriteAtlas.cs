@@ -28,6 +28,19 @@ namespace Synthos.SynSceneOptimizer
             public int ImagesChanged;
             public int SpritesSkipped;
             public int ReferencesRewritten;
+
+            // Why sprites were left alone, e.g. "tiled image" -> 4
+            public Dictionary<string, int> SkipReasons = new Dictionary<string, int>();
+
+            public string DescribeSkips() => string.Join(", ", SkipReasons.OrderByDescending(kvp => kvp.Value).Select(kvp => $"{kvp.Value} {kvp.Key}"));
+
+            internal void AddSkip(string reason, int count = 1)
+            {
+                if (count <= 0) return;
+                SkipReasons.TryGetValue(reason, out int current);
+                SkipReasons[reason] = current + count;
+                SpritesSkipped += count;
+            }
         }
 
         private class SpriteGroupKey
@@ -57,8 +70,12 @@ namespace Synthos.SynSceneOptimizer
             var result = new Result();
             var spriteUsers = CollectEligibleSprites(scene, rewriteScriptReferences, out var excluded);
             var fullRemap = new Dictionary<Sprite, Sprite>();
-            result.SpritesSkipped = excluded.Count;
-            if (spriteUsers.Count < 2) return result;
+            foreach (string reason in excluded.Values) result.AddSkip(reason);
+            if (spriteUsers.Count < 2)
+            {
+                result.AddSkip("with no other sprite to share an atlas with", spriteUsers.Count);
+                return result;
+            }
 
             // Sprites with matching texture settings can share an atlas; order them by canvas so a panel's
             // sprites tend to land in the same atlas
@@ -99,6 +116,8 @@ namespace Synthos.SynSceneOptimizer
                 result.ReferencesRewritten = RewriteScriptReferences(scene, fullRemap);
             }
 
+            // Eligible but unpacked: alone in their settings group, or their atlas failed to build
+            result.AddSkip("with no other sprite of matching settings to share an atlas with", spriteUsers.Count - fullRemap.Count);
             return result;
         }
 
@@ -141,10 +160,10 @@ namespace Synthos.SynSceneOptimizer
         /// (an animation, a SpriteRenderer, a protected script, an excluded Image, and scripts unless their references
         /// are rewritten) is left alone, so both versions never ship and runtime swaps keep working.
         /// </summary>
-        private static Dictionary<Sprite, List<Image>> CollectEligibleSprites(Scene scene, bool rewriteScriptReferences, out HashSet<Sprite> excluded)
+        private static Dictionary<Sprite, List<Image>> CollectEligibleSprites(Scene scene, bool rewriteScriptReferences, out Dictionary<Sprite, string> excluded)
         {
             var users = new Dictionary<Sprite, List<Image>>();
-            excluded = new HashSet<Sprite>();
+            excluded = new Dictionary<Sprite, string>();
 
             var referencedElsewhere = CollectSpritesUsedOutsideImages(scene, rewriteScriptReferences);
 
@@ -155,9 +174,11 @@ namespace Synthos.SynSceneOptimizer
                     Sprite sprite = image.sprite;
                     if (sprite == null) continue;
 
-                    if (!IsEligibleImage(image) || !IsEligibleSprite(sprite) || referencedElsewhere.Contains(sprite))
+                    string reason = GetImageSkipReason(image) ?? GetSpriteSkipReason(sprite);
+                    if (reason == null && referencedElsewhere.TryGetValue(sprite, out string usedBy)) reason = usedBy;
+                    if (reason != null)
                     {
-                        excluded.Add(sprite);
+                        if (!excluded.ContainsKey(sprite)) excluded[sprite] = reason;
                         continue;
                     }
 
@@ -170,44 +191,49 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            foreach (Sprite sprite in excluded) users.Remove(sprite);
+            foreach (Sprite sprite in excluded.Keys) users.Remove(sprite);
             return users;
         }
 
-        private static bool IsEligibleImage(Image image)
+        // Video screens are RawImages or renderers, never Images, so video players' control UI is fine to pack
+        private static string GetImageSkipReason(Image image)
         {
-            if (SynProtectionData.IsProtected(image.gameObject)) return false;
-            if (SynSceneQuery.IsVideoComponentDetected(image)) return false;
-            if (image.type == Image.Type.Tiled) return false;   // tiling needs the texture to repeat on its own
-            if (image.useSpriteMesh) return false;
-            if (image.overrideSprite != image.sprite) return false;
+            if (SynProtectionData.IsProtected(image.gameObject)) return "on protected objects";
+            if (image.type == Image.Type.Tiled) return "on tiled images";   // tiling needs the texture to repeat on its own
+            if (image.useSpriteMesh) return "using a sprite mesh";
+            if (image.overrideSprite != image.sprite) return "with an override sprite";
 
             // Custom shaders may expect the sprite to fill the whole texture (0-1 UVs)
             Material mat = image.material;
-            if (mat == null || mat == image.defaultMaterial) return true;
+            if (mat == null || mat == image.defaultMaterial) return null;
             string shader = mat.shader != null ? mat.shader.name : "";
-            return shader == "UI/Default" || shader.Contains("Supersampled UI");
+            return shader == "UI/Default" || shader.Contains("Supersampled UI") ? null : "with a custom UI shader";
         }
 
-        private static bool IsEligibleSprite(Sprite sprite)
+        private static string GetSpriteSkipReason(Sprite sprite)
         {
-            if (sprite.packed) return false; // already in an atlas
+            if (sprite.packed) return "already in an atlas";
             Texture2D tex = sprite.texture;
-            if (tex == null || sprite.associatedAlphaSplitTexture != null) return false;
+            if (tex == null || sprite.associatedAlphaSplitTexture != null) return "without a usable texture";
             Rect r = sprite.textureRect;
-            if (r.width < 1 || r.height < 1 || r.width > MaxSpriteSize || r.height > MaxSpriteSize) return false;
-            if (SynProtectionData.IsProtected(tex)) return false;
-            return true;
+            if (r.width < 1 || r.height < 1) return "without a usable texture";
+            if (r.width > MaxSpriteSize || r.height > MaxSpriteSize) return $"larger than {MaxSpriteSize} px";
+            if (SynProtectionData.IsProtected(tex)) return "with a protected texture";
+            return null;
         }
 
-        private static HashSet<Sprite> CollectSpritesUsedOutsideImages(Scene scene, bool scriptReferencesRewritable)
+        private static Dictionary<Sprite, string> CollectSpritesUsedOutsideImages(Scene scene, bool scriptReferencesRewritable)
         {
-            var sprites = new HashSet<Sprite>();
+            var sprites = new Dictionary<Sprite, string>();
+            void Add(Sprite sprite, string reason)
+            {
+                if (sprite != null && !sprites.ContainsKey(sprite)) sprites[sprite] = reason;
+            }
             foreach (GameObject root in scene.GetRootGameObjects())
             {
                 foreach (SpriteRenderer sr in root.GetComponentsInChildren<SpriteRenderer>(true))
                 {
-                    if (sr.sprite != null) sprites.Add(sr.sprite);
+                    Add(sr.sprite, "also used by a SpriteRenderer");
                 }
 
                 // Scripts, Udon variables and button sprite swaps. When their references get rewritten they don't
@@ -215,13 +241,14 @@ namespace Synthos.SynSceneOptimizer
                 foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
                 {
                     if (behaviour == null || behaviour is Image) continue;
-                    if (scriptReferencesRewritable && !SynProtectionData.IsProtected(behaviour.gameObject)) continue;
+                    bool isProtected = SynProtectionData.IsProtected(behaviour.gameObject);
+                    if (scriptReferencesRewritable && !isProtected) continue;
                     var iterator = new SerializedObject(behaviour).GetIterator();
                     while (iterator.Next(true))
                     {
                         if (iterator.propertyType == SerializedPropertyType.ObjectReference && iterator.objectReferenceValue is Sprite s)
                         {
-                            sprites.Add(s);
+                            Add(s, isProtected ? "held by a script on a protected object" : "held by a script or button sprite swap");
                         }
                     }
                 }
@@ -237,7 +264,7 @@ namespace Synthos.SynSceneOptimizer
                         {
                             foreach (ObjectReferenceKeyframe key in AnimationUtility.GetObjectReferenceCurve(clip, binding))
                             {
-                                if (key.value is Sprite s) sprites.Add(s);
+                                if (key.value is Sprite s) Add(s, "changed by an animation");
                             }
                         }
                     }
