@@ -2,6 +2,14 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.15] - 2026-10-10
+
+### Added
+- **Material Deduplicator pass** (Batching & Instancing, runs first): renderers using exact duplicate materials (same shader, keywords, enabled passes, textures, tiling, values and GI flags) are pointed at one shared copy on the build copy, so they can share static batches and instanced draws. Script, UdonSharp and Udon references to the duplicates are pointed at the same copy. Materials swapped in by animations, protected materials, materials held by protected scripts, and video player / protected renderers are left alone. Material assets are never edited.
+
+### Changed
+- Material Audit treats materials with different baked-emission (GI) flags as different.
+
 ## [1.1.0-beta.14] - 2026-10-10
 
 ### Changed
