@@ -27,6 +27,7 @@ namespace Synthos.SynSceneOptimizer
             public int SpritesPacked;
             public int ImagesChanged;
             public int SpritesSkipped;
+            public int ReferencesRewritten;
         }
 
         private class SpriteGroupKey
@@ -47,10 +48,15 @@ namespace Synthos.SynSceneOptimizer
             public RectInt Rect;    // where the sprite's pixels go in the atlas (padding excluded)
         }
 
-        public static Result Run(Scene scene, int maxAtlasSize)
+        /// <param name="rewriteScriptReferences">
+        /// Also pack sprites that scripts, Udon variables and button sprite swaps hold, and point those references at
+        /// the atlas copies, so swaps keep batching and sprite comparisons in scripts still match.
+        /// </param>
+        public static Result Run(Scene scene, int maxAtlasSize, bool rewriteScriptReferences)
         {
             var result = new Result();
-            var spriteUsers = CollectEligibleSprites(scene, out var excluded);
+            var spriteUsers = CollectEligibleSprites(scene, rewriteScriptReferences, out var excluded);
+            var fullRemap = new Dictionary<Sprite, Sprite>();
             result.SpritesSkipped = excluded.Count;
             if (spriteUsers.Count < 2) return result;
 
@@ -78,6 +84,7 @@ namespace Synthos.SynSceneOptimizer
                     result.SpritesPacked += remap.Count;
                     foreach (var kvp in remap)
                     {
+                        fullRemap[kvp.Key] = kvp.Value;
                         foreach (Image image in spriteUsers[kvp.Key])
                         {
                             image.sprite = kvp.Value;
@@ -87,20 +94,59 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
+            if (rewriteScriptReferences && fullRemap.Count > 0)
+            {
+                result.ReferencesRewritten = RewriteScriptReferences(scene, fullRemap);
+            }
+
             return result;
         }
 
         /// <summary>
-        /// Sprites whose every Image user can safely be pointed at an atlas copy. A sprite that anything else uses
-        /// (a script, a button's sprite swap, an animation, a SpriteRenderer, an excluded Image) is left alone, so
-        /// both versions never ship and runtime swaps keep working.
+        /// Points every serialized sprite reference on the scene's scripts at its atlas copy. That covers UdonSharp
+        /// fields, the reference list an UdonBehaviour rebuilds its variables from, and button sprite swaps.
+        /// UdonSharp copies its fields into Udon during the build, so both sides are rewritten.
         /// </summary>
-        private static Dictionary<Sprite, List<Image>> CollectEligibleSprites(Scene scene, out HashSet<Sprite> excluded)
+        private static int RewriteScriptReferences(Scene scene, Dictionary<Sprite, Sprite> remap)
+        {
+            int count = 0;
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if (behaviour == null || behaviour is Image) continue;
+
+                    var so = new SerializedObject(behaviour);
+                    var iterator = so.GetIterator();
+                    bool changed = false;
+                    while (iterator.Next(true))
+                    {
+                        if (iterator.propertyType == SerializedPropertyType.ObjectReference &&
+                            iterator.objectReferenceValue is Sprite sprite &&
+                            remap.TryGetValue(sprite, out Sprite atlasSprite))
+                        {
+                            iterator.objectReferenceValue = atlasSprite;
+                            changed = true;
+                            count++;
+                        }
+                    }
+                    if (changed) so.ApplyModifiedPropertiesWithoutUndo();
+                }
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// Sprites whose every Image user can safely be pointed at an atlas copy. A sprite that anything else uses
+        /// (an animation, a SpriteRenderer, a protected script, an excluded Image, and scripts unless their references
+        /// are rewritten) is left alone, so both versions never ship and runtime swaps keep working.
+        /// </summary>
+        private static Dictionary<Sprite, List<Image>> CollectEligibleSprites(Scene scene, bool rewriteScriptReferences, out HashSet<Sprite> excluded)
         {
             var users = new Dictionary<Sprite, List<Image>>();
             excluded = new HashSet<Sprite>();
 
-            var referencedElsewhere = CollectSpritesUsedOutsideImages(scene);
+            var referencedElsewhere = CollectSpritesUsedOutsideImages(scene, rewriteScriptReferences);
 
             foreach (GameObject root in scene.GetRootGameObjects())
             {
@@ -154,7 +200,7 @@ namespace Synthos.SynSceneOptimizer
             return true;
         }
 
-        private static HashSet<Sprite> CollectSpritesUsedOutsideImages(Scene scene)
+        private static HashSet<Sprite> CollectSpritesUsedOutsideImages(Scene scene, bool scriptReferencesRewritable)
         {
             var sprites = new HashSet<Sprite>();
             foreach (GameObject root in scene.GetRootGameObjects())
@@ -164,10 +210,12 @@ namespace Synthos.SynSceneOptimizer
                     if (sr.sprite != null) sprites.Add(sr.sprite);
                 }
 
-                // Scripts, Udon variables and button sprite swaps
+                // Scripts, Udon variables and button sprite swaps. When their references get rewritten they don't
+                // block packing, except on protected objects, which are never changed.
                 foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
                 {
                     if (behaviour == null || behaviour is Image) continue;
+                    if (scriptReferencesRewritable && !SynProtectionData.IsProtected(behaviour.gameObject)) continue;
                     var iterator = new SerializedObject(behaviour).GetIterator();
                     while (iterator.Next(true))
                     {
