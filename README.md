@@ -6,6 +6,11 @@
 
 # Synthos Scene Optimizer
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/GRIMREAPER35487/SynSceneOptimiser)](https://github.com/GRIMREAPER35487/SynSceneOptimiser/releases/latest)
+[![GitHub Downloads (latest)](https://img.shields.io/github/downloads/GRIMREAPER35487/SynSceneOptimiser/latest/total?label=downloads%40latest)](https://github.com/GRIMREAPER35487/SynSceneOptimiser/releases/latest)
+[![GitHub Downloads (total)](https://img.shields.io/github/downloads/GRIMREAPER35487/SynSceneOptimiser/total?label=downloads%40total)](https://github.com/GRIMREAPER35487/SynSceneOptimiser/releases)
+
 > [!WARNING]
 > **Experimental:** This tool is experimental. While it has been tested as thoroughly as possible, due to the nature of Unity and diverse scene configurations, some scenes might misbehave. Always make sure to **back up your project and scenes** before running optimizations just to be safe.
 >
