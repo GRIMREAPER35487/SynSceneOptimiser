@@ -2,6 +2,12 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.13] - 2026-10-10
+
+### Added
+- **Material Audit** (Window > Synthos > Material Audit, or the button in the main window): groups the open scene's materials into exact duplicates and materials that differ only by the main texture's tiling/offset, shows how many materials each group could become, how many extra mesh copies baking tiling into UVs would need, and why a group can't be baked (unknown shader, triplanar, non-UV0/world UVs, rotation, scrolling, parallax, non-mesh or protected renderers). Read-only.
+- Main window buttons for the Material Audit and UI Audit.
+
 ## [1.1.0-beta.12] - 2026-10-10
 
 ### Fixed

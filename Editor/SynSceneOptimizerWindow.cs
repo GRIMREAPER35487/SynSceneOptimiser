@@ -99,6 +99,14 @@ namespace Synthos.SynSceneOptimizer
             {
                 SynVRAMAnalyzerWindow.ShowWindow();
             }
+            if (GUILayout.Button(new GUIContent("Material Audit", "Which materials in the open scene are duplicates or differ only by tiling."), GUILayout.Width(110), GUILayout.Height(20)))
+            {
+                SynMaterialAuditWindow.ShowWindow();
+            }
+            if (GUILayout.Button(new GUIContent("UI Audit", "What each canvas in the open scene costs to draw, and distance culling setup."), GUILayout.Width(80), GUILayout.Height(20)))
+            {
+                SynUIAuditWindow.ShowWindow();
+            }
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             
