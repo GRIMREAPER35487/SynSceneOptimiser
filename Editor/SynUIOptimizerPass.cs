@@ -61,8 +61,9 @@ namespace Synthos.SynSceneOptimizer
                 SynPipelineCompactor.LogChange(
                     "UI Optimizer",
                     atlas.SpritesPacked > 0
-                        ? $"Packed {atlas.SpritesPacked} UI sprites into {atlas.Atlases} atlas(es), used by {atlas.ImagesChanged} images; pointed {atlas.ReferencesRewritten} script/button references at the atlas copies. {atlas.SpritesSkipped} sprites were left alone ({(rewrite ? "animated, " : "used by scripts, ")}tiled, custom shader, larger than {SynUISpriteAtlas.MaxSpriteSize} px or used elsewhere)."
-                        : $"No UI sprites to pack ({atlas.SpritesSkipped} left alone: swapped at runtime, tiled, custom shader, larger than {SynUISpriteAtlas.MaxSpriteSize} px or used elsewhere).");
+                        ? $"Packed {atlas.SpritesPacked} UI sprites into {atlas.Atlases} atlas(es), used by {atlas.ImagesChanged} images; pointed {atlas.ReferencesRewritten} script/button references at the atlas copies." +
+                          (atlas.SpritesSkipped > 0 ? $" Left alone: {atlas.DescribeSkips()}." : "")
+                        : $"No UI sprites to pack." + (atlas.SpritesSkipped > 0 ? $" Left alone: {atlas.DescribeSkips()}." : ""));
             }
 
             // A short cost summary, so the report shows which canvases are worth a closer look

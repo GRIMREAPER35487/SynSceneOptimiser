@@ -1,7 +1,7 @@
 {
   "name": "com.synthos.scene-optimizer",
   "displayName": "Synthos Scene Optimizer",
-  "version": "1.1.0-beta.10",
+  "version": "1.1.0-beta.11",
   "type": "world",
   "unity": "2022.3",
   "description": "Comprehensive scene and world optimization suite for VRChat. Features automatic texture VRAM reduction, mesh decimation & compression, GPU instancing enabler, audio & particle optimization, and mirror reflection mask tuning.",

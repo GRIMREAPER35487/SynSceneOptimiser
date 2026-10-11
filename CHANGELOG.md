@@ -2,6 +2,12 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.11] - 2026-10-10
+
+### Changed
+- UI sprite atlas: images on video players (e.g. ProTV controls) can be packed. Video screens are RawImages or renderers, which the atlas never touches.
+- The report now lists why sprites were left alone (e.g. "12 on tiled images, 4 larger than 512 px").
+
 ## [1.1.0-beta.10] - 2026-10-10
 
 ### Added
