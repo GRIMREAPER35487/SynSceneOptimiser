@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.14] - 2026-10-10
+
+### Changed
+- Material Audit leaves out plain-colour materials the Color Palette pass merges anyway (same rule as that pass), and says how many it left out, so its counts only show savings a new pass would add.
+
 ## [1.1.0-beta.13] - 2026-10-10
 
 ### Added

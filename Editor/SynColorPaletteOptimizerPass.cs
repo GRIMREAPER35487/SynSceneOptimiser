@@ -976,6 +976,18 @@ namespace Synthos.SynSceneOptimizer
             return objectsOptimized;
         }
 
+        /// <summary>
+        /// Whether the palette pass (when enabled) would merge this material, by the same material-level rule it
+        /// uses itself. Lets the Material Audit leave those out.
+        /// </summary>
+        public static bool IsPaletteCandidate(Material mat)
+        {
+            var pass = new SynColorPaletteOptimizerPass();
+            if (!pass.IsEnabled) return false;
+            bool ignoreInstanced = SynSceneOptimizerSettings.GetBool("PaletteAtlas_IgnoreInstanced", true);
+            return pass.IsSolidColorMaterial(mat, ignoreInstanced, out _, out _);
+        }
+
         private bool IsSolidColorMaterial(Material mat, bool ignoreInstanced, out Color color, out string reason)
         {
             color = Color.white;

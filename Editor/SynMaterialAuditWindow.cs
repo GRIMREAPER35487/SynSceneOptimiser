@@ -41,6 +41,7 @@ namespace Synthos.SynSceneOptimizer
         {
             public int MaterialCount;
             public int RendererCount;
+            public int PaletteMaterialCount;   // plain-colour materials the Color Palette pass merges anyway
             public List<SynMaterialGroup> Groups = new List<SynMaterialGroup>();
         }
 
@@ -65,6 +66,14 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
             report.MaterialCount = usage.Count;
+
+            // Plain-colour materials are merged by the Color Palette pass already; counting them here would promise
+            // savings that pass gives anyway
+            foreach (Material m in usage.Keys.Where(SynColorPaletteOptimizerPass.IsPaletteCandidate).ToList())
+            {
+                usage.Remove(m);
+                report.PaletteMaterialCount++;
+            }
 
             // Exact duplicates first; whatever is left can still be a tiling variant of something
             var exactGroups = usage.Keys.GroupBy(m => Signature(m, includeMainTiling: true)).Where(g => g.Count() > 1).ToList();
@@ -306,6 +315,10 @@ namespace Synthos.SynSceneOptimizer
 
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             EditorGUILayout.LabelField($"{report.MaterialCount} materials on {report.RendererCount} renderers in the open scene (before optimization).");
+            if (report.PaletteMaterialCount > 0)
+            {
+                EditorGUILayout.LabelField($"{report.PaletteMaterialCount} plain-colour materials are left out: the Color Palette pass merges those already. Counts below are for the other {report.MaterialCount - report.PaletteMaterialCount}.", EditorStyles.miniLabel);
+            }
             EditorGUILayout.LabelField($"Exact duplicates: {exact.Sum(g => g.Materials.Count)} materials could be {exact.Count} ({exact.Sum(g => g.MaterialsSaved)} fewer), with no mesh changes.", EditorStyles.miniLabel);
             EditorGUILayout.LabelField($"Same except tiling: {bakeable.Sum(g => g.Materials.Count)} materials could be {bakeable.Count} ({bakeable.Sum(g => g.MaterialsSaved)} fewer) by baking tiling into mesh UVs, needing {bakeable.Sum(g => g.MeshCopiesNeeded)} extra mesh copies.", EditorStyles.miniLabel);
             if (blocked.Count > 0)
