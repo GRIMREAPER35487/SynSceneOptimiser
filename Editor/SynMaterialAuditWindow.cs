@@ -212,7 +212,7 @@ namespace Synthos.SynSceneOptimizer
             var sb = new StringBuilder();
             Shader shader = m.shader;
             string mainProp = GetMainTextureProperty(m);
-            sb.Append(shader.GetInstanceID()).Append('|').Append(m.renderQueue).Append('|').Append(m.enableInstancing).Append('|').Append(m.doubleSidedGI);
+            sb.Append(shader.GetInstanceID()).Append('|').Append(m.renderQueue).Append('|').Append(m.enableInstancing).Append('|').Append(m.doubleSidedGI).Append('|').Append((int)m.globalIlluminationFlags);
             foreach (string kw in m.shaderKeywords.OrderBy(k => k)) sb.Append("|k:").Append(kw);
             for (int p = 0; p < m.passCount; p++)
             {
