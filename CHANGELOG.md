@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.1.0-beta.12] - 2026-10-10
+
+### Fixed
+- UI sprite atlases were always square, so a set of sprites slightly too big for one size left most of the next size empty (empty space costs as much memory as used space once compressed). Atlases can now be rectangular (e.g. 1024x512), use the smallest area that fits, and full atlases are trimmed to the height they use. Sprites are packed tallest first for tighter rows. Atlases are rebuilt once.
+
 ## [1.1.0-beta.11] - 2026-10-10
 
 ### Changed
