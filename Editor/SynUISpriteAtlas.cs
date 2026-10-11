@@ -16,7 +16,7 @@ namespace Synthos.SynSceneOptimizer
     /// </summary>
     public static class SynUISpriteAtlas
     {
-        private const string AtlasHashTag = "UIAtlas_v1";
+        private const string AtlasHashTag = "UIAtlas_v2"; // v2: rectangular, trimmed atlases
         private const int Padding = 4;      // gap around each sprite, half of it filled with copied edge pixels
         private const int Extrude = 2;
         public const int MaxSpriteSize = 512;
@@ -61,6 +61,13 @@ namespace Synthos.SynSceneOptimizer
             public RectInt Rect;    // where the sprite's pixels go in the atlas (padding excluded)
         }
 
+        private class AtlasLayout
+        {
+            public List<Placement> Placements;
+            public int Width;
+            public int Height;
+        }
+
         /// <param name="rewriteScriptReferences">
         /// Also pack sprites that scripts, Udon variables and button sprite swaps hold, and point those references at
         /// the atlas copies, so swaps keep batching and sprite comparisons in scripts still match.
@@ -86,15 +93,15 @@ namespace Synthos.SynSceneOptimizer
             foreach (var group in groups)
             {
                 var sprites = group
-                    .OrderBy(s => GetFirstCanvasPath(spriteUsers[s]))
-                    .ThenByDescending(s => s.rect.height)
+                    .OrderByDescending(s => Mathf.CeilToInt(s.textureRect.height))
+                    .ThenBy(s => GetFirstCanvasPath(spriteUsers[s]))
                     .ToList();
 
-                foreach (List<Placement> atlasLayout in Pack(sprites, maxAtlasSize, out int atlasSize))
+                foreach (AtlasLayout atlasLayout in Pack(sprites, maxAtlasSize))
                 {
-                    if (atlasLayout.Count < 2) continue; // a one-sprite atlas saves nothing
+                    if (atlasLayout.Placements.Count < 2) continue; // a one-sprite atlas saves nothing
 
-                    Dictionary<Sprite, Sprite> remap = BuildAtlas(atlasLayout, atlasSize, group.Key);
+                    Dictionary<Sprite, Sprite> remap = BuildAtlas(atlasLayout, group.Key);
                     if (remap == null) continue;
 
                     result.Atlases++;
@@ -292,21 +299,28 @@ namespace Synthos.SynSceneOptimizer
         }
 
         /// <summary>
-        /// Shelf packing into square power-of-two atlases: the smallest size that fits everything, or as many
-        /// full-size atlases as needed.
+        /// Shelf packing into power-of-two atlases (square or rectangular): the smallest area that fits everything,
+        /// or as many full-size atlases as needed, each trimmed to the height it actually uses. Empty atlas space
+        /// costs as much memory as used space once compressed, so this keeps atlases tight.
         /// </summary>
-        private static IEnumerable<List<Placement>> Pack(List<Sprite> sprites, int maxSize, out int atlasSize)
+        private static List<AtlasLayout> Pack(List<Sprite> sprites, int maxSize)
         {
-            var layouts = new List<List<Placement>>();
-            atlasSize = maxSize;
+            var layouts = new List<AtlasLayout>();
 
-            for (int size = 128; size <= maxSize; size *= 2)
+            var sizes = new List<(int W, int H)>();
+            for (int w = 64; w <= maxSize; w *= 2)
             {
-                var single = TryPack(sprites, size, out List<Sprite> rest);
+                for (int h = 64; h <= maxSize; h *= 2) sizes.Add((w, h));
+            }
+            // Smallest area first; for equal areas prefer squarer shapes
+            sizes = sizes.OrderBy(sz => sz.W * sz.H).ThenBy(sz => Mathf.Abs(sz.W - sz.H)).ToList();
+
+            foreach (var (w, h) in sizes)
+            {
+                var single = TryPack(sprites, w, h, out List<Sprite> rest, out _);
                 if (rest.Count == 0)
                 {
-                    atlasSize = size;
-                    layouts.Add(single);
+                    layouts.Add(new AtlasLayout { Placements = single, Width = w, Height = h });
                     return layouts;
                 }
             }
@@ -314,36 +328,37 @@ namespace Synthos.SynSceneOptimizer
             List<Sprite> remaining = sprites;
             while (remaining.Count > 0)
             {
-                var layout = TryPack(remaining, maxSize, out List<Sprite> rest);
-                if (layout.Count == 0) break;
-                layouts.Add(layout);
+                var placed = TryPack(remaining, maxSize, maxSize, out List<Sprite> rest, out int usedHeight);
+                if (placed.Count == 0) break;
+                layouts.Add(new AtlasLayout { Placements = placed, Width = maxSize, Height = Mathf.Min(maxSize, Mathf.NextPowerOfTwo(Mathf.Max(64, usedHeight))) });
                 remaining = rest;
             }
             return layouts;
         }
 
-        private static List<Placement> TryPack(List<Sprite> sprites, int size, out List<Sprite> rest)
+        private static List<Placement> TryPack(List<Sprite> sprites, int width, int height, out List<Sprite> rest, out int usedHeight)
         {
             var placed = new List<Placement>();
             rest = new List<Sprite>();
             int x = 0, y = 0, shelfHeight = 0;
+            usedHeight = 0;
 
             foreach (Sprite sprite in sprites)
             {
                 int w = Mathf.CeilToInt(sprite.textureRect.width) + Padding * 2;
                 int h = Mathf.CeilToInt(sprite.textureRect.height) + Padding * 2;
-                if (w > size || h > size)
+                if (w > width || h > height)
                 {
                     rest.Add(sprite);
                     continue;
                 }
-                if (x + w > size)
+                if (x + w > width)
                 {
                     x = 0;
                     y += shelfHeight;
                     shelfHeight = 0;
                 }
-                if (y + h > size)
+                if (y + h > height)
                 {
                     rest.Add(sprite);
                     continue;
@@ -352,15 +367,18 @@ namespace Synthos.SynSceneOptimizer
                 placed.Add(new Placement { Sprite = sprite, Rect = new RectInt(x + Padding, y + Padding, w - Padding * 2, h - Padding * 2) });
                 x += w;
                 shelfHeight = Mathf.Max(shelfHeight, h);
+                usedHeight = Mathf.Max(usedHeight, y + h);
             }
             return placed;
         }
 
         /// <summary>Writes (or reuses) the atlas PNG and returns original sprite -> atlas sprite.</summary>
-        private static Dictionary<Sprite, Sprite> BuildAtlas(List<Placement> layout, int size, SpriteGroupKey key)
+        private static Dictionary<Sprite, Sprite> BuildAtlas(AtlasLayout atlasLayout, SpriteGroupKey key)
         {
+            List<Placement> layout = atlasLayout.Placements;
+            int width = atlasLayout.Width, height = atlasLayout.Height;
             string platform = SynAssetCache.GetPlatformName();
-            var tokens = new List<string> { AtlasHashTag, key.ToString(), size.ToString() };
+            var tokens = new List<string> { AtlasHashTag, key.ToString(), $"{width}x{height}" };
             foreach (Placement p in layout)
             {
                 Rect r = p.Sprite.textureRect;
@@ -373,7 +391,7 @@ namespace Synthos.SynSceneOptimizer
             {
                 if (!File.Exists(path))
                 {
-                    if (!WriteAtlasPng(layout, size, key, path)) return null;
+                    if (!WriteAtlasPng(layout, width, height, key, path)) return null;
                     if (!AssetDatabase.IsValidFolder(Path.GetDirectoryName(path).Replace('\\', '/'))) AssetDatabase.Refresh();
                     AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
                 }
@@ -382,7 +400,7 @@ namespace Synthos.SynSceneOptimizer
                 if (AssetImporter.GetAtPath(path) is TextureImporter existing &&
                     (existing.textureType != TextureImporterType.Sprite || existing.spriteImportMode != SpriteImportMode.Multiple))
                 {
-                    ConfigureImporter(path, layout, size, key);
+                    ConfigureImporter(path, layout, Mathf.Max(width, height), key);
                 }
 
                 SynAssetCache.RecordUsage(path);
@@ -404,9 +422,9 @@ namespace Synthos.SynSceneOptimizer
 
         private static string SpriteName(int index) => $"s{index}";
 
-        private static bool WriteAtlasPng(List<Placement> layout, int size, SpriteGroupKey key, string path)
+        private static bool WriteAtlasPng(List<Placement> layout, int width, int height, SpriteGroupKey key, string path)
         {
-            var output = new Color32[size * size];
+            var output = new Color32[width * height];
             var sourcePixels = new Dictionary<Texture2D, (Color32[] Pixels, int Width)>();
 
             foreach (Placement p in layout)
@@ -429,7 +447,7 @@ namespace Synthos.SynSceneOptimizer
                 for (int y = -Extrude; y < h + Extrude; y++)
                 {
                     int srcRow = (sy + Mathf.Clamp(y, 0, h - 1)) * source.Width;
-                    int dstRow = (p.Rect.y + y) * size;
+                    int dstRow = (p.Rect.y + y) * width;
                     for (int x = -Extrude; x < w + Extrude; x++)
                     {
                         output[dstRow + p.Rect.x + x] = source.Pixels[srcRow + sx + Mathf.Clamp(x, 0, w - 1)];
@@ -437,7 +455,7 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            var atlas = new Texture2D(size, size, TextureFormat.RGBA32, false, !key.Srgb);
+            var atlas = new Texture2D(width, height, TextureFormat.RGBA32, false, !key.Srgb);
             try
             {
                 atlas.SetPixels32(output);
