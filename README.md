@@ -20,7 +20,7 @@ Comprehensive VRChat scene and world optimization suite for Unity. Features auto
 
 ## Features
 
-- **Smart Texture VRAM Optimizer:** Analyzes scene textures using Sobel edge detection and spatial frequency algorithms (derived from Avatar Compressor) to identify low-frequency, flat, or simple textures (e.g., solid walls, plain floors). Dynamically downscales them (e.g., from 2048 to 512 or 256) while retaining full resolution for high-detail textures and normal maps. Automatically protects Bakery lightmaps and Mochie shader assets, with full support for custom drag-and-drop exclusions. Generated assets are saved into the per-platform cache.
+- **Smart Texture VRAM Optimizer:** Scores scene textures with [Synthos Texture Analysis](https://github.com/GRIMREAPER35487/avatar-compressor-Synthos/tree/main/TextureAnalysis) (shared with Avatar Compressor; edges, fine detail lost when shrinking and how much of the texture is detailed, on the GPU when available) to identify low-frequency, flat, or simple textures (e.g., solid walls, plain floors). Dynamically downscales them (e.g., from 2048 to 512 or 256) while retaining full resolution for high-detail textures and normal maps. Automatically protects Bakery lightmaps and Mochie shader assets, with full support for custom drag-and-drop exclusions. Generated assets are saved into the per-platform cache.
 - **Mesh Simplifier:** High-performance polygon reduction powered by Meshia (Quadric Error Metrics). Supports target scene triangle budgets, configurable decimation thresholds, and platform-specific profiles (PC vs. Mobile/Quest). Preserves UV borders, lightmap seams (UV1/UV2), normals, and blend shapes to prevent visual artifacts. Includes a dedicated Skip List to leave hero assets untouched and a Preservation List for custom decimation ratios.
 - **Mesh Memory Optimizer:** Reduces vertex data overhead across all scene meshes. Converts UV3 Texture Array slice channels into compact 2-component Vector2 coordinates (cutting UV3 memory footprint in half), strips unreferenced or empty vertex channels (such as zeroed tangents, unused UVs, and default vertex colors), and purges intermediate mesh clones to save memory.
 - **Mesh Deduplicator & Instancer:** Scans the scene for geometrically identical meshes across different GameObjects and unifies their references to point to a single master mesh instance. Automatically clears the `Batching Static` flag on unified objects so Unity can batch them together via hardware GPU instancing, drastically reducing unique mesh memory.
@@ -96,10 +96,10 @@ Add the Synthos package repository:
 ```
 https://grimreaper35487.github.io/Synthos-VRC-Packages/index.json
 ```
-Then search for **Synthos Scene Optimizer** in the Creator Companion or ALCOM and click **Install** (it will automatically install **Meshia Mesh Simplification (Synthos Edition)** as a dependency).
+Then search for **Synthos Scene Optimizer** in the Creator Companion or ALCOM and click **Install** (it will automatically install **Meshia Mesh Simplification (Synthos Edition)** and **Synthos Texture Analysis** as dependencies).
 
 ## Credits & Acknowledgments
 
-- **Texture Compression Algorithm:** Adapted from and inspired by [avatar-compressor](https://github.com/Limitex/avatar-compressor) by **Limitex** (MIT License).
+- **Texture Analysis:** Provided by Synthos Texture Analysis, based on [avatar-compressor](https://github.com/Limitex/avatar-compressor) by **Limitex** (MIT License).
 - **Mesh Decimation Engine:** Powered by [Meshia](https://github.com/RamType0/Meshia.MeshSimplification) by **Ram.Type-0** (MIT License).
 

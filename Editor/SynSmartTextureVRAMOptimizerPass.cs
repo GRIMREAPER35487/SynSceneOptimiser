@@ -1,12 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 using UnityEngine.SceneManagement;
 using UnityEditor;
-using Synthos.SynSceneOptimizer.TextureCompressor;
+using Synthos.TextureAnalysis;
 
 namespace Synthos.SynSceneOptimizer
 {
@@ -20,7 +19,7 @@ namespace Synthos.SynSceneOptimizer
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
-            EditorGUILayout.HelpBox("Analyzes scene textures via Sobel gradient & spatial frequency to automatically downscale low-complexity textures (e.g. flat walls 2048 -> 512/256), saving 75-93% VRAM per texture. Integrates with deterministic per-platform cache.", MessageType.Info);
+            EditorGUILayout.HelpBox("Scores how much visible detail each scene texture has (edges, fine detail lost when shrinking, and how much of the texture is detailed) and downscales low-detail textures (e.g. flat walls 2048 -> 512/256), saving 75-93% VRAM per texture. Uses the GPU when available. Integrates with deterministic per-platform cache.", MessageType.Info);
 
             bool protectBakery = SynSceneOptimizerSettings.GetBool("SmartVRAM_ProtectBakery", true);
             bool newProtectBakery = EditorGUILayout.Toggle(new GUIContent("Protect Bakery & Lightmaps", "Guarantees that all Bakery lightmaps, directional maps, volumes, and shadowmasks are never downscaled."), protectBakery);
@@ -155,9 +154,6 @@ namespace Synthos.SynSceneOptimizer
             public string AssetPath;
             public bool IsNormalMap;
             public bool AlphaIsTransparency;
-            public Color32[] PixelsSnapshot;
-            public int Width;
-            public int Height;
             public float ComplexityScore;
             public int RecommendedDivisor;
             public Texture2D OptimizedTexture;
@@ -190,8 +186,11 @@ namespace Synthos.SynSceneOptimizer
                 ? SynSceneOptimizerSettings.GetInt("SmartVRAM_MinResAndroid", 256)
                 : SynSceneOptimizerSettings.GetInt("SmartVRAM_MinResPC", 512);
 
-            var complexityCalc = new SynComplexityCalculator(highThresh, lowThresh, 1, 8);
-            var formatSelector = new SynTextureFormatSelector(true, highThresh);
+            bool isMobile = currentPlatform == SynTargetPlatform.Android || currentPlatform == SynTargetPlatform.iOS;
+            var complexityCalc = new ComplexityCalculator(highThresh, lowThresh, 1, 8);
+            var formatSelector = new TextureFormatSelector(
+                isMobile ? CompressionPlatform.Mobile : CompressionPlatform.Desktop, true, highThresh);
+            var processor = new TextureProcessor(32, 8192, false, ResizeBackendPreference.Auto);
 
             // Step 1: Collect all distinct scene materials
             var sceneMaterials = new HashSet<Material>();
@@ -229,7 +228,7 @@ namespace Synthos.SynSceneOptimizer
 
                     string propName = ShaderUtil.GetPropertyName(mat.shader, i);
                     Texture tex = mat.GetTexture(propName);
-                    bool usedAsTransparency = IsMainTextureProperty(propName) && IsCutoutOrTransparent(mat);
+                    bool usedAsTransparency = AlphaCoverage.IsCoverage(mat, propName);
 
                     if (tex is Texture2D existingTex && candidateMap.TryGetValue(existingTex, out var existingCandidate))
                     {
@@ -301,7 +300,7 @@ namespace Synthos.SynSceneOptimizer
             if (candidateList.Count == 0) return;
 
             // Step 4: Complexity scores. Cached per texture content in Library/ so unchanged textures are never
-            // read back again; the rest are analyzed in small batches from a <=1024px readback.
+            // analyzed again; the rest are scored in small batches (on the GPU when available).
             var scoreCache = LoadScoreCache();
             var toAnalyze = new List<TextureCandidate>();
             foreach (var candidate in candidateList)
@@ -317,33 +316,40 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            const int batchSize = 16;
-            for (int start = 0; start < toAnalyze.Count; start += batchSize)
+            if (toAnalyze.Count > 0)
             {
-                var batch = toAnalyze.GetRange(start, Math.Min(batchSize, toAnalyze.Count - start));
-                foreach (var candidate in batch)
-                {
-                    candidate.PixelsSnapshot = ExtractPixels(candidate.SourceTexture, AnalysisReadbackSize, out candidate.Width, out candidate.Height);
-                }
+                var analyzer = new TextureAnalyzer(
+                    AnalysisStrategyType.Combined,
+                    AnalysisConstants.CombinedDefaultFastWeight,
+                    AnalysisConstants.CombinedDefaultHighAccuracyWeight,
+                    AnalysisConstants.CombinedDefaultPerceptualWeight,
+                    processor);
 
-                Parallel.ForEach(batch, candidate =>
+                const int batchSize = 16;
+                for (int start = 0; start < toAnalyze.Count; start += batchSize)
                 {
-                    if (candidate.PixelsSnapshot != null && candidate.PixelsSnapshot.Length > 0)
+                    var batch = toAnalyze.GetRange(start, Math.Min(batchSize, toAnalyze.Count - start));
+                    var inputs = new Dictionary<Texture2D, TextureAnalysisInput>();
+                    foreach (var candidate in batch)
                     {
-                        candidate.ComplexityScore = SynTextureAnalysisEngine.AnalyzeComplexity(candidate.PixelsSnapshot, candidate.Width, candidate.Height, candidate.IsNormalMap, candidate.AlphaIsTransparency);
-                        candidate.RecommendedDivisor = complexityCalc.CalculateRecommendedDivisor(candidate.ComplexityScore);
+                        inputs[candidate.SourceTexture] = new TextureAnalysisInput(candidate.IsNormalMap, candidate.AlphaIsTransparency);
                     }
-                    else
-                    {
-                        candidate.ComplexityScore = 0.5f;
-                        candidate.RecommendedDivisor = 1;
-                    }
-                    candidate.PixelsSnapshot = null; // free memory
-                });
 
-                foreach (var candidate in batch)
-                {
-                    scoreCache[GetScoreKey(candidate)] = candidate.ComplexityScore;
+                    var scores = analyzer.AnalyzeBatch(inputs);
+                    foreach (var candidate in batch)
+                    {
+                        if (scores.TryGetValue(candidate.SourceTexture, out float score))
+                        {
+                            candidate.ComplexityScore = Mathf.Clamp01(score);
+                            candidate.RecommendedDivisor = complexityCalc.CalculateRecommendedDivisor(candidate.ComplexityScore);
+                            scoreCache[GetScoreKey(candidate)] = candidate.ComplexityScore;
+                        }
+                        else
+                        {
+                            candidate.ComplexityScore = AnalysisConstants.DefaultComplexityScore;
+                            candidate.RecommendedDivisor = 1;
+                        }
+                    }
                 }
             }
             if (toAnalyze.Count > 0) SaveScoreCache(scoreCache);
@@ -409,7 +415,7 @@ namespace Synthos.SynSceneOptimizer
                 }
                 else
                 {
-                    candidate.OptimizedTexture = CreateCompressedCopy(candidate, targetWidth, targetHeight, formatSelector, currentPlatform) ?? src;
+                    candidate.OptimizedTexture = CreateCompressedCopy(candidate, targetWidth, targetHeight, formatSelector, processor, currentPlatform) ?? src;
                 }
             }
 
@@ -512,38 +518,6 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
-        // The complexity metrics sample at most ~512 px across, so a 1024 px readback keeps the same detail while
-        // using 1/16 of the memory of a 4K readback
-        private const int AnalysisReadbackSize = 1024;
-
-        private static Color32[] ExtractPixels(Texture2D src, int maxSize, out int width, out int height)
-        {
-            width = src.width;
-            height = src.height;
-            int largest = Mathf.Max(width, height);
-            if (largest > maxSize)
-            {
-                width = Mathf.Max(1, width * maxSize / largest);
-                height = Mathf.Max(1, height * maxSize / largest);
-            }
-
-            RenderTexture rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32);
-            Graphics.Blit(src, rt);
-            RenderTexture prev = RenderTexture.active;
-            RenderTexture.active = rt;
-
-            Texture2D snapshot = new Texture2D(width, height, TextureFormat.RGBA32, false);
-            snapshot.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-            snapshot.Apply(false);
-
-            RenderTexture.active = prev;
-            RenderTexture.ReleaseTemporary(rt);
-
-            Color32[] pixels = snapshot.GetPixels32();
-            UnityEngine.Object.DestroyImmediate(snapshot);
-            return pixels;
-        }
-
         /// <summary>
         /// Copies each source texture (with its import settings) into the cache, lowers the copy's max size
         /// and lets Unity re-import it. Runs outside the pipeline's StartAssetEditing batch so the copies
@@ -615,26 +589,39 @@ namespace Synthos.SynSceneOptimizer
 
         /// <summary>
         /// Fallback for textures without a TextureImporter (e.g. generated .asset textures):
-        /// GPU resize, then compress to the platform format chosen by SynTextureFormatSelector.
+        /// area-average resize, then compress to the platform format chosen by the shared
+        /// format selector, stepping to a safer format where the cheap one would band.
         /// </summary>
-        private static Texture2D CreateCompressedCopy(TextureCandidate candidate, int targetWidth, int targetHeight, SynTextureFormatSelector formatSelector, SynTargetPlatform platform)
+        private static Texture2D CreateCompressedCopy(TextureCandidate candidate, int targetWidth, int targetHeight, TextureFormatSelector formatSelector, TextureProcessor processor, SynTargetPlatform platform)
         {
             Texture2D src = candidate.SourceTexture;
-            bool hasAlpha = GraphicsFormatUtility.HasAlphaChannel(src.graphicsFormat);
-            TextureFormat format = formatSelector.SelectFormat(candidate.IsNormalMap, candidate.ComplexityScore, hasAlpha, platform);
 
             // BC/DXT formats require dimensions that are multiples of 4; skip rather than ship uncompressed
             bool isMobile = platform == SynTargetPlatform.Android || platform == SynTargetPlatform.iOS;
             if (!isMobile && (targetWidth % 4 != 0 || targetHeight % 4 != 0)) return null;
 
-            string hash = SynAssetCache.ComputeTextureHash(src, TextureHashTag, targetWidth, targetHeight, $"Fallback_{format}");
+            // The format is chosen from the resized pixels below; it follows from these inputs.
+            string hash = SynAssetCache.ComputeTextureHash(src, TextureHashTag, targetWidth, targetHeight,
+                $"Fallback_v2_{platform}_{candidate.ComplexityScore:F3}_{(candidate.IsNormalMap ? 1 : 0)}");
             if (SynAssetCache.TryGetCachedAsset<Texture2D>(SynAssetCache.TexturesCategory, hash, out Texture2D cachedTex))
             {
                 return cachedTex;
             }
 
-            Texture2D result = ResizeTexture(src, targetWidth, targetHeight, candidate.IsNormalMap);
+            Texture2D result = processor.ResizeSingle(src, new Vector2Int(targetWidth, targetHeight), candidate.IsNormalMap);
             if (result == null) return null;
+
+            // Checked on the resized pixels: alpha that only existed in fine detail may be gone
+            bool hasAlpha = TextureFormatSelector.HasSignificantAlpha(result);
+            TextureFormat format = formatSelector.PredictFormat(candidate.IsNormalMap, candidate.ComplexityScore, hasAlpha);
+            if (candidate.IsNormalMap)
+            {
+                new NormalMapPreprocessor().PrepareForCompression(result, src.format, format);
+            }
+            else
+            {
+                format = CompressionArtifactDetector.ChooseCleanFormat(result, format);
+            }
 
             EditorUtility.CompressTexture(result, format, TextureCompressionQuality.Best);
             result.wrapModeU = src.wrapModeU;
@@ -673,42 +660,13 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
-        private static Texture2D ResizeTexture(Texture2D src, int targetWidth, int targetHeight, bool isNormalMap)
-        {
-            if (src == null) return null;
-
-            // Normal maps hold linear data; an sRGB render target would gamma-encode the vectors
-            RenderTextureReadWrite readWrite = isNormalMap ? RenderTextureReadWrite.Linear : RenderTextureReadWrite.Default;
-            RenderTexture rt = RenderTexture.GetTemporary(targetWidth, targetHeight, 0, RenderTextureFormat.ARGB32, readWrite);
-            Graphics.Blit(src, rt);
-
-            RenderTexture prev = RenderTexture.active;
-            RenderTexture.active = rt;
-
-            Texture2D result = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, true, isNormalMap);
-            result.ReadPixels(new Rect(0, 0, targetWidth, targetHeight), 0, 0);
-            result.Apply(true);
-
-            RenderTexture.active = prev;
-            RenderTexture.ReleaseTemporary(rt);
-
-            if (isNormalMap)
-            {
-                Color32[] pixels = result.GetPixels32();
-                SynNormalMapPreprocessor.ReNormalize(pixels);
-                result.SetPixels32(pixels);
-                result.Apply(true);
-            }
-
-            return result;
-        }
-
         private const string ScoreCachePath = "Library/SynSceneOptimizer/TextureComplexityScores.txt";
 
-        // Identity hash covers the texture content and import settings; flags and algorithm version cover the analysis
+        // Identity hash covers the texture content and import settings; flags and algorithm version cover the analysis.
+        // v3: shared Synthos Texture Analysis, Combined strategy
         private static string GetScoreKey(TextureCandidate c)
         {
-            return $"v2|{SynAssetCache.GetAssetIdentityHash(c.SourceTexture)}|n{(c.IsNormalMap ? 1 : 0)}|a{(c.AlphaIsTransparency ? 1 : 0)}";
+            return $"v3|{SynAssetCache.GetAssetIdentityHash(c.SourceTexture)}|n{(c.IsNormalMap ? 1 : 0)}|a{(c.AlphaIsTransparency ? 1 : 0)}";
         }
 
         private static Dictionary<string, float> LoadScoreCache()
@@ -821,20 +779,6 @@ namespace Synthos.SynSceneOptimizer
 
             if (RenderSettings.skybox != null) PinObject(RenderSettings.skybox);
             return pinned;
-        }
-
-        private static bool IsMainTextureProperty(string propName)
-        {
-            return propName == "_MainTex" || propName == "_BaseMap" || propName == "_BaseColorMap";
-        }
-
-        // Alpha is coverage only for alpha-tested or blended materials (queue >= AlphaTest or blend keywords)
-        private static bool IsCutoutOrTransparent(Material mat)
-        {
-            return mat.renderQueue >= (int)UnityEngine.Rendering.RenderQueue.AlphaTest
-                || mat.IsKeywordEnabled("_ALPHATEST_ON")
-                || mat.IsKeywordEnabled("_ALPHABLEND_ON")
-                || mat.IsKeywordEnabled("_ALPHAPREMULTIPLY_ON");
         }
 
         private static bool IsEditorOnly(Transform t)
