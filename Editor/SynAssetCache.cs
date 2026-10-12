@@ -83,6 +83,24 @@ namespace Synthos.SynSceneOptimizer
         // Cache files used this session that bypass MemoryCache (e.g. importer-backed texture copies)
         private static readonly HashSet<string> ExtraUsedPaths = new HashSet<string>();
 
+        /// <summary>
+        /// Copies an asset into the cache and imports the copy so it can be loaded right away. Must not run inside a
+        /// StartAssetEditing batch: there CopyAsset writes the file but never imports it, so the copy has no GUID and
+        /// loads as null. A copy left on disk unimported by such a batch (before 1.2.0) is imported here.
+        /// </summary>
+        public static bool CopyAssetImported(string sourcePath, string copyPath)
+        {
+            if (File.Exists(copyPath))
+            {
+                if (string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(copyPath)))
+                {
+                    AssetDatabase.ImportAsset(copyPath, ImportAssetOptions.ForceSynchronousImport);
+                }
+                return true;
+            }
+            return AssetDatabase.CopyAsset(sourcePath, copyPath);
+        }
+
         public static void RecordUsage(string assetPath)
         {
             if (!string.IsNullOrEmpty(assetPath)) ExtraUsedPaths.Add(assetPath);

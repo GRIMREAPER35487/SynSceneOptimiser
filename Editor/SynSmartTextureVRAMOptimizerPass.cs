@@ -534,25 +534,18 @@ namespace Synthos.SynSceneOptimizer
                     AssetDatabase.Refresh();
                 }
 
+                // Copied one at a time outside a StartAssetEditing batch, which would leave the copies unimported
                 var copied = new List<PendingImporterCopy>();
-                AssetDatabase.StartAssetEditing();
-                try
+                foreach (var p in pendingCopies)
                 {
-                    foreach (var p in pendingCopies)
+                    if (SynAssetCache.CopyAssetImported(p.Candidate.AssetPath, p.CopyPath))
                     {
-                        if (File.Exists(p.CopyPath) || AssetDatabase.CopyAsset(p.Candidate.AssetPath, p.CopyPath))
-                        {
-                            copied.Add(p);
-                        }
-                        else
-                        {
-                            Debug.LogWarning($"[SYN SCENE OPTIMIZER] Texture Complexity Compressor: Failed to copy '{p.Candidate.AssetPath}' into the cache. Keeping original.");
-                        }
+                        copied.Add(p);
                     }
-                }
-                finally
-                {
-                    AssetDatabase.StopAssetEditing();
+                    else
+                    {
+                        Debug.LogWarning($"[SYN SCENE OPTIMIZER] Texture Complexity Compressor: Failed to copy '{p.Candidate.AssetPath}' into the cache. Keeping original.");
+                    }
                 }
 
                 string importerPlatform = GetImporterPlatformName(SynAssetCache.GetCurrentTargetPlatform());
