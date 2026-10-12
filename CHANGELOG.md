@@ -8,6 +8,9 @@ All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versio
 - **Texture Complexity Compressor uses Synthos Texture Analysis** - The detail scoring, format choice and resizing now come from the shared `com.synthos.texture-analysis` package (the same code as Avatar Compressor), which VCC installs automatically. Textures are scored with the **Combined** method: besides edges and colour spread it measures the fine detail that would be lost by shrinking and how much of the texture is detailed. Noisy or grainy textures (concrete, dirt) shrink more readily and textures with fine features (text, line art) keep their size more often. Scoring runs on the GPU when available. All scores are recalculated once; results will differ from 1.1.0, so check your thresholds.
 - **Generated textures** (textures without an import file, e.g. baked `.asset` files) are resized with area averaging instead of a plain blit, skip the alpha channel when it holds no transparency (DXT1 instead of DXT5), and step to a safer format when the cheap one would band. On Quest their normal maps use ASTC 4x4 (was 5x5). Textures with an import file keep using a re-imported copy with their own import settings.
 
+### Fixed
+- **Downscaled texture and audio copies were missing on the first run** - Textures and audio clips with an import file are copied into the cache and re-imported smaller. The copies were made inside a batched asset edit, where Unity writes the file but never imports it, so the copy could not be loaded and the original was kept. They only took effect on a later run, after Unity happened to import the files, so a build right after adding or changing textures shipped them at full size. Copies are now imported straight away, and copies left behind unimported are imported on the next run.
+
 ## [1.1.0] - 2026-10-11
 
 Stable release of everything in the 1.1.0 betas below. Highlights:

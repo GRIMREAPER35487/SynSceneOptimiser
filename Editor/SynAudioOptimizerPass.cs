@@ -173,26 +173,19 @@ namespace Synthos.SynSceneOptimizer
                     AssetDatabase.Refresh();
                 }
 
+                // Copied one at a time outside a StartAssetEditing batch, which would leave the copies unimported
                 var copied = new List<PendingAudioCopy>();
-                AssetDatabase.StartAssetEditing();
-                try
+                foreach (var p in pending)
                 {
-                    foreach (var p in pending)
+                    string sourcePath = AssetDatabase.GetAssetPath(p.Source);
+                    if (SynAssetCache.CopyAssetImported(sourcePath, p.CopyPath))
                     {
-                        string sourcePath = AssetDatabase.GetAssetPath(p.Source);
-                        if (File.Exists(p.CopyPath) || AssetDatabase.CopyAsset(sourcePath, p.CopyPath))
-                        {
-                            copied.Add(p);
-                        }
-                        else
-                        {
-                            Debug.LogWarning($"[AudioOptimizer] Could not copy '{sourcePath}' into the cache. Keeping original.");
-                        }
+                        copied.Add(p);
                     }
-                }
-                finally
-                {
-                    AssetDatabase.StopAssetEditing();
+                    else
+                    {
+                        Debug.LogWarning($"[AudioOptimizer] Could not copy '{sourcePath}' into the cache. Keeping original.");
+                    }
                 }
 
                 AssetDatabase.StartAssetEditing();
