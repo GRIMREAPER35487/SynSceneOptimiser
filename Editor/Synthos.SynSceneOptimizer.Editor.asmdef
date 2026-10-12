@@ -12,7 +12,9 @@
         "VRC.Udon.Editor",
         "VRC.Udon.Serialization.OdinSerializer",
         "Meshia.MeshSimplification.Runtime",
-        "Meshia.MeshSimplification.Editor"
+        "Meshia.MeshSimplification.Editor",
+        "Synthos.TextureAnalysis",
+        "Synthos.TextureAnalysis.Editor"
     ],
     "includePlatforms": [
         "Editor"
