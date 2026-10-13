@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.15] - 2026-10-13
+
+### Fixed
+- **Texture Complexity Compressor preview** - The texture list collapsed to a sliver (its scrollbar and entries were hidden), and so did the frozen textures list; both now have a fixed height. When the textures would get larger, the total showed "-63 % (--52326797 B)"; it now says "Increase" with the size in MB.
+
 ## [1.2.0-beta.14] - 2026-10-13
 
 ### Added

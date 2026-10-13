@@ -194,7 +194,7 @@ namespace Synthos.SynSceneOptimizer
 
             s_frozenSearch = EditorGUILayout.TextField("Search", s_frozenSearch);
             bool useScroll = data.frozenTextures.Count >= 3;
-            if (useScroll) s_frozenScroll = EditorGUILayout.BeginScrollView(s_frozenScroll, GUILayout.MaxHeight(250));
+            if (useScroll) s_frozenScroll = EditorGUILayout.BeginScrollView(s_frozenScroll, GUILayout.Height(Mathf.Min(300f, data.frozenTextures.Count * 95f)));
 
             int removeIndex = -1;
             for (int i = data.frozenTextures.Count - 1; i >= 0; i--)
@@ -316,6 +316,9 @@ namespace Synthos.SynSceneOptimizer
         private static string s_previewSearch = "";
         private static Vector2 s_previewScroll;
 
+        // A fixed height: inside the settings window's own scroll view, a max-height list collapses to nothing
+        private const float PreviewListHeight = 450f;
+
         private static string PreviewHash(SynTextureCompressorSettings s)
         {
             return string.Join("|", s.Signature(), s.ProcessMainTextures, s.ProcessNormalMaps, s.ProcessEmissionMaps, s.ProcessOtherTextures,
@@ -372,15 +375,18 @@ namespace Synthos.SynSceneOptimizer
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             EditorGUILayout.LabelField("Original", MemoryCalculator.FormatBytes(totalOriginal), EditorStyles.boldLabel);
             EditorGUILayout.LabelField("After", MemoryCalculator.FormatBytes(totalAfter), EditorStyles.boldLabel);
-            float savings = totalOriginal > 0 ? 1f - (float)totalAfter / totalOriginal : 0f;
+            long change = totalOriginal - totalAfter;
+            float savings = totalOriginal > 0 ? (float)change / totalOriginal : 0f;
             Color saved = GUI.color;
-            GUI.color = Color.green;
-            EditorGUILayout.LabelField("Savings", $"{savings:P0} (-{MemoryCalculator.FormatBytes(totalOriginal - totalAfter)})", EditorStyles.boldLabel);
+            GUI.color = change >= 0 ? Color.green : new Color(1f, 0.55f, 0.3f);
+            EditorGUILayout.LabelField(change >= 0 ? "Savings" : "Increase",
+                change >= 0 ? $"{savings:P0} (-{MemoryCalculator.FormatBytes(change)})" : $"{-savings:P0} (+{MemoryCalculator.FormatBytes(-change)})",
+                EditorStyles.boldLabel);
             GUI.color = saved;
             EditorGUILayout.EndVertical();
 
             s_previewSearch = EditorGUILayout.TextField("Search", s_previewSearch);
-            s_previewScroll = EditorGUILayout.BeginScrollView(s_previewScroll, GUILayout.MaxHeight(400));
+            s_previewScroll = EditorGUILayout.BeginScrollView(s_previewScroll, GUILayout.Height(PreviewListHeight));
             bool processedHeader = false, frozenHeader = false, skippedHeader = false;
             foreach (var e in s_preview)
             {
