@@ -13,6 +13,8 @@ namespace Synthos.SynSceneOptimizer
         public string globalObjectId;
         public string scenePath;
         public string name;
+        // Ids of passes allowed to work on this object anyway (see SynOptimizationPass.ProtectionTargets)
+        public List<string> allowedPasses = new List<string>();
 
         [System.NonSerialized]
         private UnityEngine.Object _resolvedObj;
@@ -144,6 +146,14 @@ namespace Synthos.SynSceneOptimizer
         }
     }
 
+    /// <summary>Passes allowed to work on a protected asset (material, mesh or texture) anyway.</summary>
+    [System.Serializable]
+    public class SynAssetAllowance
+    {
+        public UnityEngine.Object asset;
+        public List<string> allowedPasses = new List<string>();
+    }
+
     public class SynProtectionData : ScriptableObject
     {
         // Persistent Scene GameObject references
@@ -156,6 +166,8 @@ namespace Synthos.SynSceneOptimizer
         public List<Mesh> protectedMeshes = new List<Mesh>();
         public List<Texture2D> protectedTextures = new List<Texture2D>();
         public List<string> protectedTextureNamePatterns = new List<string>();
+        // Per-asset allow lists for protectedMaterials / protectedMeshes / protectedTextures
+        public List<SynAssetAllowance> assetAllowances = new List<SynAssetAllowance>();
 
         // Persistent lists for Mesh Simplifier (Preservation and Skip lists)
         public List<SynPersistentObjectReference> simplifierPreserveList = new List<SynPersistentObjectReference>();
@@ -221,7 +233,14 @@ namespace Synthos.SynSceneOptimizer
         }
 
         // ---- Pipeline run scope: protected objects resolved once against the scene being optimized ----
-        private static HashSet<GameObject> runProtectedObjects;
+        // Each protected object with the passes it allows (null = none)
+        private static Dictionary<GameObject, HashSet<string>> runProtectedObjects;
+
+        /// <summary>
+        /// The pass the pipeline is running. Protection checks during a pass ignore entries that allow it; outside a
+        /// pass (editor windows, the final commit) everything protected counts as protected.
+        /// </summary>
+        public static string CurrentPassId { get; set; }
         public static bool HasActiveRun { get; private set; }
         public static Scene ActiveRunScene { get; private set; }
         public static int ActiveRunId { get; private set; }
@@ -235,14 +254,15 @@ namespace Synthos.SynSceneOptimizer
             ActiveRunScene = scene;
             ActiveRunId++;
             HasActiveRun = true;
-            runProtectedObjects = new HashSet<GameObject>();
+            runProtectedObjects = new Dictionary<GameObject, HashSet<string>>();
+            CurrentPassId = null;
 
             var data = GetInstance();
             if (data == null) return;
 
             foreach (var refObj in data.protectedSceneObjects)
             {
-                if (refObj?.Resolve() is GameObject go) runProtectedObjects.Add(go);
+                if (refObj?.Resolve() is GameObject go) AddRunProtection(go, refObj.allowedPasses);
             }
 
             foreach (var legacy in data.protectedGameObjects)
@@ -251,14 +271,86 @@ namespace Synthos.SynSceneOptimizer
                 GameObject match = legacy.scene == scene
                     ? legacy
                     : SynSceneQuery.FindGameObjectByPath(scene, SynPersistentObjectReference.GetHierarchyPath(legacy.transform));
-                if (match != null) runProtectedObjects.Add(match);
+                if (match != null) AddRunProtection(match, null);
             }
+        }
+
+        // An object listed twice allows only the passes both entries allow
+        private static void AddRunProtection(GameObject go, List<string> allowed)
+        {
+            var set = allowed != null && allowed.Count > 0 ? new HashSet<string>(allowed) : null;
+            if (runProtectedObjects.TryGetValue(go, out var existing))
+            {
+                if (existing == null || set == null) set = null;
+                else set.IntersectWith(existing);
+            }
+            runProtectedObjects[go] = set;
         }
 
         public static void EndRun()
         {
             HasActiveRun = false;
             runProtectedObjects = null;
+            CurrentPassId = null;
+        }
+
+        /// <summary>
+        /// For an object in the scene being optimized: null if no protected entry covers it, otherwise the passes
+        /// every covering entry (the object or a parent) allows.
+        /// </summary>
+        public static HashSet<string> GetRunAllowedPasses(GameObject go)
+        {
+            if (go == null || !HasActiveRun || runProtectedObjects == null) return null;
+            HashSet<string> allowed = null;
+            for (Transform ancestor = go.transform; ancestor != null; ancestor = ancestor.parent)
+            {
+                if (!runProtectedObjects.TryGetValue(ancestor.gameObject, out var entry)) continue;
+                if (allowed == null)
+                {
+                    allowed = entry != null ? new HashSet<string>(entry) : new HashSet<string>();
+                }
+                else if (entry == null)
+                {
+                    allowed.Clear();
+                }
+                else
+                {
+                    allowed.IntersectWith(entry);
+                }
+            }
+            return allowed;
+        }
+
+        /// <summary>The allow list of a protected asset, or null if it has none.</summary>
+        public static List<string> GetAssetAllowedPasses(UnityEngine.Object asset)
+        {
+            var data = GetInstance();
+            if (asset == null || data == null || data.assetAllowances == null) return null;
+            foreach (var allowance in data.assetAllowances)
+            {
+                if (allowance != null && allowance.asset == asset) return allowance.allowedPasses;
+            }
+            return null;
+        }
+
+        /// <summary>The allow list of a protected asset, created if needed (for the Protected Objects window).</summary>
+        public SynAssetAllowance GetOrCreateAllowance(UnityEngine.Object asset)
+        {
+            if (assetAllowances == null) assetAllowances = new List<SynAssetAllowance>();
+            foreach (var allowance in assetAllowances)
+            {
+                if (allowance != null && allowance.asset == asset) return allowance;
+            }
+            var created = new SynAssetAllowance { asset = asset };
+            assetAllowances.Add(created);
+            return created;
+        }
+
+        private static bool AllowsCurrentPass(UnityEngine.Object asset)
+        {
+            if (CurrentPassId == null) return false;
+            List<string> allowed = GetAssetAllowedPasses(asset);
+            return allowed != null && allowed.Contains(CurrentPassId);
         }
 
         public static bool IsProtected(GameObject go)
@@ -267,11 +359,8 @@ namespace Synthos.SynSceneOptimizer
 
             if (HasActiveRun && runProtectedObjects != null)
             {
-                for (Transform ancestor = go.transform; ancestor != null; ancestor = ancestor.parent)
-                {
-                    if (runProtectedObjects.Contains(ancestor.gameObject)) return true;
-                }
-                return false;
+                HashSet<string> allowed = GetRunAllowedPasses(go);
+                return allowed != null && (CurrentPassId == null || !allowed.Contains(CurrentPassId));
             }
 
             var data = GetInstance();
@@ -306,7 +395,7 @@ namespace Synthos.SynSceneOptimizer
             if (mat == null) return false;
             var data = GetInstance();
             if (data == null) return false;
-            return data.protectedMaterials.Contains(mat);
+            return data.protectedMaterials.Contains(mat) && !AllowsCurrentPass(mat);
         }
 
         public static bool IsProtected(Mesh mesh)
@@ -314,7 +403,7 @@ namespace Synthos.SynSceneOptimizer
             if (mesh == null) return false;
             var data = GetInstance();
             if (data == null) return false;
-            return data.protectedMeshes.Contains(mesh);
+            return data.protectedMeshes.Contains(mesh) && !AllowsCurrentPass(mesh);
         }
 
         public static bool IsProtected(Texture2D tex)
@@ -322,7 +411,7 @@ namespace Synthos.SynSceneOptimizer
             if (tex == null) return false;
             var data = GetInstance();
             if (data == null) return false;
-            if (data.protectedTextures.Contains(tex)) return true;
+            if (data.protectedTextures.Contains(tex)) return !AllowsCurrentPass(tex);
 
             if (data.protectedTextureNamePatterns != null && data.protectedTextureNamePatterns.Count > 0)
             {

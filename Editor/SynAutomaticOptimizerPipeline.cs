@@ -173,12 +173,13 @@ namespace Synthos.SynSceneOptimizer
                     SynSceneQuery.ClearCache();
                     SynPipelineCompactor.BeginStagingContext(scene);
 
-                    List<Renderer> renderers = SynSceneQuery.GetAllRenderers(scene);
+                    List<Renderer> allRenderers = SynSceneQuery.GetAllRenderers(scene);
+                    allRenderers.RemoveAll(r => r == null);
 
-                    // Filter out GameObjects marked as protected by user settings
-                    int initialCount = renderers.Count;
-                    renderers.RemoveAll(r => r == null || SynProtectionData.IsProtected(r.gameObject));
-                    int protectedCount = initialCount - renderers.Count;
+                    // Filter out GameObjects marked as protected by user settings. A protected entry can allow some
+                    // passes, so each pass gets its own list below.
+                    List<Renderer> renderers = allRenderers.FindAll(r => !SynProtectionData.IsProtected(r.gameObject));
+                    int protectedCount = allRenderers.Count - renderers.Count;
                     if (protectedCount > 0)
                     {
                         Debug.Log($"[SYN SCENE OPTIMIZER] Protected Objects: Shielded {protectedCount} renderers belonging to protected GameObjects.");
@@ -219,9 +220,14 @@ namespace Synthos.SynSceneOptimizer
 
                             int logStart = SynPipelineCompactor.PipelineLogSummary.Count;
                             var passTimer = System.Diagnostics.Stopwatch.StartNew();
+                            SynProtectionData.CurrentPassId = pass.Id;
+                            List<Renderer> passRenderers = protectedCount > 0
+                                ? allRenderers.FindAll(r => r != null && !SynProtectionData.IsProtected(r.gameObject))
+                                : allRenderers.FindAll(r => r != null);
+                            var given = new HashSet<Renderer>(passRenderers);
                             try
                             {
-                                pass.Execute(scene, renderers);
+                                pass.Execute(scene, passRenderers);
                             }
                             catch (Exception e)
                             {
@@ -230,6 +236,16 @@ namespace Synthos.SynSceneOptimizer
                                 Debug.LogError("[SYN SCENE OPTIMIZER] " + errMsg);
                                 failedPasses.Add(pass.Name);
                                 result.Status = "Failed";
+                            }
+                            finally
+                            {
+                                SynProtectionData.CurrentPassId = null;
+                                SynPipelineCompactor.RecordPassChanges(pass.Id);
+
+                                // Renderers a pass removed (EditorOnly pruning; in Play Mode Destroy is deferred) stay
+                                // out of later passes
+                                given.ExceptWith(passRenderers);
+                                if (given.Count > 0) allRenderers.RemoveAll(r => given.Contains(r));
                             }
                             result.Seconds = passTimer.Elapsed.TotalSeconds;
                             for (int m = logStart; m < SynPipelineCompactor.PipelineLogSummary.Count; m++)
@@ -398,7 +414,7 @@ namespace Synthos.SynSceneOptimizer
             return EditorSceneManager.SaveScenes(unsaved.ToArray());
         }
 
-        private static List<SynOptimizationPass> GetSortedPasses()
+        internal static List<SynOptimizationPass> GetSortedPasses()
         {
             var list = new List<SynOptimizationPass>();
             Assembly assembly = Assembly.GetExecutingAssembly();

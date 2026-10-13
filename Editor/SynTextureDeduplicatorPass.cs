@@ -22,6 +22,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Finds textures that are exact copies of each other (same image file contents and import settings) and points materials at one copy, so the build holds it once.";
         public override string Category => "Memory & Assets";
         public override int Priority => 47; // After the Texture Complexity Compressor (45), before palettes (50)
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Materials | SynProtectionTargets.Textures;
+        public override string ProtectionEffect => "Swaps the material for a copy that uses one shared copy of identical textures.";
 
         public override void Execute(Scene scene, List<Renderer> renderers)
         {

@@ -13,6 +13,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Disables reflection probes on renderers that only use matte materials to reduce rendering overhead.";
         public override string Category => "Structural Cleanup";
         public override int Priority => 10;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects;
+        public override string ProtectionEffect => "Turns off reflection probes on the renderer when its materials are matte.";
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
@@ -116,6 +118,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Truncates material list indices that exceed the underlying mesh submesh count, or clears them if no mesh is assigned.";
         public override string Category => "Structural Cleanup";
         public override int Priority => 20;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects;
+        public override string ProtectionEffect => "Removes empty or extra material slots from the renderer.";
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
@@ -225,6 +229,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Disables light probes on static renderers using baked lightmaps to reduce CPU/GPU sorting overhead.";
         public override string Category => "Structural Cleanup";
         public override int Priority => 15;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects;
+        public override string ProtectionEffect => "Turns off light probes on static lightmapped renderers.";
 
         public override void Execute(Scene scene, List<Renderer> renderers)
         {
@@ -265,6 +271,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Cleans up unused texture serialized references inside material data files to save VRAM.";
         public override string Category => "Structural Cleanup";
         public override int Priority => 25;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Materials;
+        public override string ProtectionEffect => "Swaps the material for a copy without textures in slots the shader does not have.";
 
         public override void Execute(Scene scene, List<Renderer> renderers)
         {

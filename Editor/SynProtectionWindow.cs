@@ -8,6 +8,8 @@ namespace Synthos.SynSceneOptimizer
     {
         private Vector2 scrollPos;
         private SynProtectionData data;
+        private List<SynOptimizationPass> passes;
+        private readonly HashSet<string> expandedAllowLists = new HashSet<string>();
 
         [MenuItem("Window/Synthos/Protected Objects")]
         public static void ShowWindow()
@@ -49,7 +51,7 @@ namespace Synthos.SynSceneOptimizer
 
             GUILayout.BeginHorizontal();
             GUILayout.Space(10);
-            GUILayout.Label("Assets and hierarchy objects in these lists will be completely bypassed by all optimizer passes.", EditorStyles.miniLabel);
+            GUILayout.Label("Assets and hierarchy objects in these lists are skipped by every optimizer pass, except the passes you allow on each entry.", EditorStyles.miniLabel);
             GUILayout.EndHorizontal();
             GUILayout.Space(10);
 
@@ -82,6 +84,7 @@ namespace Synthos.SynSceneOptimizer
                     data.protectedMaterials.Clear();
                     data.protectedMeshes.Clear();
                     data.protectedTextures.Clear();
+                    data.assetAllowances.Clear();
                     EditorUtility.SetDirty(data);
                     AssetDatabase.SaveAssets();
                 }
@@ -128,6 +131,10 @@ namespace Synthos.SynSceneOptimizer
                 data.protectedSceneObjects.RemoveAt(index);
                 EditorUtility.SetDirty(data);
                 AssetDatabase.SaveAssets();
+            }, (refObj, index) =>
+            {
+                if (refObj.allowedPasses == null) refObj.allowedPasses = new List<string>();
+                DrawAllowList("go:" + refObj.globalObjectId + refObj.scenePath, refObj.allowedPasses, () => refObj.allowedPasses, SynProtectionTargets.Objects);
             });
 
             GUILayout.Space(15);
@@ -146,8 +153,13 @@ namespace Synthos.SynSceneOptimizer
                 }
             }, index => {
                 Undo.RecordObject(data, "Remove Protected Material");
+                data.assetAllowances.RemoveAll(a => a == null || a.asset == data.protectedMaterials[index]);
                 data.protectedMaterials.RemoveAt(index);
                 EditorUtility.SetDirty(data);
+            }, (asset, index) =>
+            {
+                if (asset == null) return;
+                DrawAllowList("asset:" + asset.GetInstanceID(), SynProtectionData.GetAssetAllowedPasses(asset), () => data.GetOrCreateAllowance(asset).allowedPasses, SynProtectionTargets.Materials);
             });
 
             GUILayout.Space(15);
@@ -166,8 +178,13 @@ namespace Synthos.SynSceneOptimizer
                 }
             }, index => {
                 Undo.RecordObject(data, "Remove Protected Mesh");
+                data.assetAllowances.RemoveAll(a => a == null || a.asset == data.protectedMeshes[index]);
                 data.protectedMeshes.RemoveAt(index);
                 EditorUtility.SetDirty(data);
+            }, (asset, index) =>
+            {
+                if (asset == null) return;
+                DrawAllowList("asset:" + asset.GetInstanceID(), SynProtectionData.GetAssetAllowedPasses(asset), () => data.GetOrCreateAllowance(asset).allowedPasses, SynProtectionTargets.Meshes);
             });
 
             GUILayout.Space(15);
@@ -186,8 +203,13 @@ namespace Synthos.SynSceneOptimizer
                 }
             }, index => {
                 Undo.RecordObject(data, "Remove Protected Texture");
+                data.assetAllowances.RemoveAll(a => a == null || a.asset == data.protectedTextures[index]);
                 data.protectedTextures.RemoveAt(index);
                 EditorUtility.SetDirty(data);
+            }, (asset, index) =>
+            {
+                if (asset == null) return;
+                DrawAllowList("asset:" + asset.GetInstanceID(), SynProtectionData.GetAssetAllowedPasses(asset), () => data.GetOrCreateAllowance(asset).allowedPasses, SynProtectionTargets.Textures);
             });
 
             GUILayout.EndScrollView();
@@ -282,7 +304,64 @@ namespace Synthos.SynSceneOptimizer
             GUILayout.Space(4);
         }
 
-        private void DrawList<T>(List<T> list, System.Action<T, int> drawItem, System.Action<int> removeItem)
+        /// <summary>
+        /// Foldout under a protected entry listing the passes allowed to work on it anyway, with what each one does.
+        /// </summary>
+        private void DrawAllowList(string key, List<string> allowed, System.Func<List<string>> getOrCreate, SynProtectionTargets kind)
+        {
+            if (passes == null) passes = SynAutomaticOptimizerPipeline.GetSortedPasses();
+
+            var relevant = passes.FindAll(p => (p.ProtectionTargets & kind) != 0);
+            if (relevant.Count == 0) return;
+
+            int count = allowed != null ? allowed.Count : 0;
+            var names = new List<string>();
+            foreach (var pass in relevant)
+            {
+                if (allowed != null && allowed.Contains(pass.Id)) names.Add(pass.Name);
+            }
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Space(30);
+            bool expanded = expandedAllowLists.Contains(key);
+            string summary = count == 0 ? "Allowed passes: none" : $"Allowed passes: {string.Join(", ", names)}";
+            bool newExpanded = EditorGUILayout.Foldout(expanded, new GUIContent(summary, "Passes that may work on this entry even though it is protected."), true);
+            GUILayout.EndHorizontal();
+            if (newExpanded != expanded)
+            {
+                if (newExpanded) expandedAllowLists.Add(key);
+                else expandedAllowLists.Remove(key);
+            }
+            if (!newExpanded) return;
+
+            foreach (var pass in relevant)
+            {
+                bool isAllowed = allowed != null && allowed.Contains(pass.Id);
+                GUILayout.BeginHorizontal();
+                GUILayout.Space(45);
+                string label = pass.IsEnabled ? pass.Name : pass.Name + " (pass is off)";
+                bool newAllowed = EditorGUILayout.ToggleLeft(new GUIContent(label, pass.ProtectionEffect), isAllowed);
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Space(63);
+                GUILayout.Label(pass.ProtectionEffect, EditorStyles.wordWrappedMiniLabel);
+                GUILayout.EndHorizontal();
+
+                if (newAllowed != isAllowed)
+                {
+                    Undo.RecordObject(data, "Change Allowed Passes");
+                    List<string> list = getOrCreate();
+                    if (newAllowed) list.Add(pass.Id);
+                    else list.Remove(pass.Id);
+                    allowed = list;
+                    EditorUtility.SetDirty(data);
+                }
+            }
+            GUILayout.Space(4);
+        }
+
+        private void DrawList<T>(List<T> list, System.Action<T, int> drawItem, System.Action<int> removeItem, System.Action<T, int> drawBelow = null)
         {
             if (list == null || list.Count == 0)
             {
@@ -311,6 +390,7 @@ namespace Synthos.SynSceneOptimizer
                 }
                 GUI.backgroundColor = prevColor;
                 GUILayout.EndHorizontal();
+                drawBelow?.Invoke(list[i], i);
             }
         }
     }

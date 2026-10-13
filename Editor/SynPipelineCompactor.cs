@@ -19,6 +19,9 @@ namespace Synthos.SynSceneOptimizer
         public HashSet<string> PurgedTextureProperties { get; set; } = new HashSet<string>();
         public bool IsDirty { get; set; }
         public List<string> AppliedPassTags { get; private set; } = new List<string>();
+        // Passes that changed this state, so protected objects only get the baked copy if they allow all of them
+        public HashSet<string> ChangedByPasses { get; } = new HashSet<string>();
+        internal int LastSignature;
 
         // Analysis cache
         public bool IsGPUInstanced { get; set; }
@@ -33,6 +36,8 @@ namespace Synthos.SynSceneOptimizer
         public List<Vector4> CustomUV3Channels { get; set; } = new List<Vector4>();
         public bool IsDirty { get; set; }
         public List<string> AppliedPassTags { get; private set; } = new List<string>();
+        public HashSet<string> ChangedByPasses { get; } = new HashSet<string>();
+        internal int LastSignature;
     }
 
     public class SynVirtualRendererState
@@ -122,6 +127,82 @@ namespace Synthos.SynSceneOptimizer
             return r != null && OriginalRendererMeshes.TryGetValue(r, out Mesh original) ? original : currentMesh;
         }
         private static readonly System.Diagnostics.Stopwatch PipelineStopwatch = new System.Diagnostics.Stopwatch();
+
+        /// <summary>
+        /// Called by the pipeline after each pass: notes the pass on every staged material and mesh it changed.
+        /// </summary>
+        public static void RecordPassChanges(string passId)
+        {
+            foreach (var state in MaterialCache.Values)
+            {
+                int signature = GetSignature(state);
+                if (signature != state.LastSignature)
+                {
+                    state.ChangedByPasses.Add(passId);
+                    state.LastSignature = signature;
+                }
+            }
+            foreach (var state in MeshCache.Values)
+            {
+                int signature = GetSignature(state);
+                if (signature != state.LastSignature)
+                {
+                    state.ChangedByPasses.Add(passId);
+                    state.LastSignature = signature;
+                }
+            }
+        }
+
+        // Order-independent hash of everything a pass can stage on a material
+        private static int GetSignature(SynVirtualMaterialState state)
+        {
+            unchecked
+            {
+                int hash = state.IsDirty ? 1 : 0;
+                hash = hash * 31 + (state.TargetShader != null ? state.TargetShader.GetInstanceID() : 0);
+                hash = hash * 31 + (state.IsGPUInstanced ? 1 : 0);
+                hash = hash * 31 + state.AppliedPassTags.Count;
+                int sum = 0;
+                foreach (var kvp in state.TrackedTextures) sum += kvp.Key.GetHashCode() * 17 ^ (kvp.Value != null ? kvp.Value.GetInstanceID() : 0);
+                foreach (var kvp in state.TrackedFloats) sum += kvp.Key.GetHashCode() * 19 ^ kvp.Value.GetHashCode();
+                foreach (var kvp in state.TrackedVectors) sum += kvp.Key.GetHashCode() * 23 ^ kvp.Value.GetHashCode();
+                foreach (string keyword in state.TrackedKeywords) sum += keyword.GetHashCode() * 29;
+                foreach (string property in state.PurgedTextureProperties) sum += property.GetHashCode() * 37;
+                return hash * 31 + sum;
+            }
+        }
+
+        private static int GetSignature(SynVirtualMeshState state)
+        {
+            unchecked
+            {
+                int hash = state.IsDirty ? 1 : 0;
+                hash = hash * 31 + state.AppliedPassTags.Count;
+                hash = hash * 31 + state.CustomUV0Channels.Count;
+                hash = hash * 31 + state.CustomUV2Channels.Count;
+                return hash * 31 + state.CustomUV3Channels.Count;
+            }
+        }
+
+        // A protected object only takes a baked copy if every pass that changed it is on its allow lists
+        private static bool ChangesAllowed(HashSet<string> changedBy, HashSet<string> objectAllowed, List<string> assetAllowed, bool assetProtected)
+        {
+            if (objectAllowed != null && !objectAllowed.IsSupersetOf(changedBy)) return false;
+            if (assetProtected)
+            {
+                foreach (string passId in changedBy)
+                {
+                    if (assetAllowed == null || !assetAllowed.Contains(passId)) return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool MeshChangesAllowed(Mesh mesh, HashSet<string> objectAllowed)
+        {
+            if (!MeshCache.TryGetValue(mesh, out var state)) return true;
+            return ChangesAllowed(state.ChangedByPasses, objectAllowed, SynProtectionData.GetAssetAllowedPasses(mesh), SynProtectionData.IsProtected(mesh));
+        }
 
         public static void LogChange(string passName, string message)
         {
@@ -218,6 +299,7 @@ namespace Synthos.SynSceneOptimizer
                             state.HasVertexManipulation = true;
                         }
 
+                        state.LastSignature = GetSignature(state);
                         MaterialCache[mat] = state;
                     }
                 }
@@ -273,6 +355,7 @@ namespace Synthos.SynSceneOptimizer
                     }
                     state.CustomUV3Channels = uv3;
 
+                    state.LastSignature = GetSignature(state);
                     MeshCache[mesh] = state;
                 }
             }
@@ -327,6 +410,7 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
+            newState.LastSignature = GetSignature(newState);
             MaterialCache[mat] = newState;
             return newState;
         }
@@ -485,8 +569,14 @@ namespace Synthos.SynSceneOptimizer
             {
                 if (r == null) continue;
 
-                // Video players and user-protected objects keep their original materials and meshes
-                if (SynSceneQuery.IsVideoComponentDetected(r) || SynProtectionData.IsProtected(r.gameObject))
+                // Video players keep their original materials and meshes. User-protected objects only take a baked
+                // copy when every pass that changed it is on the object's (and the asset's) allow list.
+                if (SynSceneQuery.IsVideoComponentDetected(r))
+                {
+                    continue;
+                }
+                HashSet<string> objectAllowed = SynProtectionData.GetRunAllowedPasses(r.gameObject);
+                if (objectAllowed != null && objectAllowed.Count == 0)
                 {
                     continue;
                 }
@@ -500,6 +590,11 @@ namespace Synthos.SynSceneOptimizer
                     // (mobile shader fallback, stochastic disable) staged changes on them
                     if (sharedMats[i] != null && bakedMaterials.TryGetValue(sharedMats[i], out Material bakedMat))
                     {
+                        if (MaterialCache.TryGetValue(sharedMats[i], out var matState) &&
+                            !ChangesAllowed(matState.ChangedByPasses, objectAllowed, SynProtectionData.GetAssetAllowedPasses(sharedMats[i]), SynProtectionData.IsProtected(sharedMats[i])))
+                        {
+                            continue;
+                        }
                         if (bakedMat != null && bakedMat != sharedMats[i])
                         {
                             sharedMats[i] = bakedMat;
@@ -517,7 +612,7 @@ namespace Synthos.SynSceneOptimizer
                 if (r is MeshRenderer)
                 {
                     MeshFilter mf = r.GetComponent<MeshFilter>();
-                    if (mf != null && mf.sharedMesh != null && !IsGeneratedAsset(mf.sharedMesh))
+                    if (mf != null && mf.sharedMesh != null && !IsGeneratedAsset(mf.sharedMesh) && MeshChangesAllowed(mf.sharedMesh, objectAllowed))
                     {
                         if (bakedMeshes.TryGetValue(mf.sharedMesh, out Mesh bakedMesh))
                         {
@@ -532,7 +627,7 @@ namespace Synthos.SynSceneOptimizer
                 else if (r is SkinnedMeshRenderer)
                 {
                     SkinnedMeshRenderer smr = (SkinnedMeshRenderer)r;
-                    if (smr.sharedMesh != null && !IsGeneratedAsset(smr.sharedMesh))
+                    if (smr.sharedMesh != null && !IsGeneratedAsset(smr.sharedMesh) && MeshChangesAllowed(smr.sharedMesh, objectAllowed))
                     {
                         if (bakedMeshes.TryGetValue(smr.sharedMesh, out Mesh bakedMesh))
                         {

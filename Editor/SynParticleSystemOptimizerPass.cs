@@ -17,6 +17,10 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Clamps ParticleSystem maximum capacities based on emission rates and forces culling to Pause when off-screen to save CPU/GPU simulation time.";
 
         public override int Priority => 25; // Run early-mid
+
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects;
+
+        public override string ProtectionEffect => "Caps particle counts and turns on offscreen culling.";
         public override string Category => "Effects";
 
         public override void Execute(Scene scene, List<Renderer> renderers)

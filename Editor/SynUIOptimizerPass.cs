@@ -18,6 +18,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Cheaper world UI: skips drawing fully transparent graphics, turns off Raycast Target on graphics that can't be clicked, flattens tiny Z offsets so canvases batch better, and can pack UI sprites into atlases. Open the UI Audit to see what each canvas costs.";
         public override string Category => "UI";
         public override int Priority => 60;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects;
+        public override string ProtectionEffect => "Changes canvas and graphic settings and packs UI sprites into atlases.";
         public override string Tab => "Optimizers";
 
         private const string CullTransparentKey = "UIOptimizer_CullTransparent";

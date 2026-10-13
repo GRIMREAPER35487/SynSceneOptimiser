@@ -19,6 +19,7 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Hooks into Bakery's lighting bake completion events and automatically triggers reflection probe baking so probes are never left unbaked or cleared.";
         public override string Category => "Lighting & Probes";
         public override int Priority => 10;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.None;
         public override string Tab => "General Fixes";
         public override bool RunInPreview => false; // Acts on reflection probes in every open scene
 

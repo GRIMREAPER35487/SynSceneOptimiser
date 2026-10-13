@@ -20,6 +20,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Merges solid color materials into a single texture atlas to reduce material variance and draw calls.";
         public override string Category => "Texture Optimization";
         public override int Priority => 50;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Materials | SynProtectionTargets.Meshes;
+        public override string ProtectionEffect => "Replaces the material with a shared palette material and the mesh with a copy that has palette UVs.";
 
         private struct ShaderPropertyLayout
         {

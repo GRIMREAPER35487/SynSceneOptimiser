@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.11] - 2026-10-13
+
+### Added
+- **Allowed passes on protected entries** - Each entry in Protected Objects (objects, materials, meshes, textures) has an "Allowed passes" list: those passes work on it anyway, the rest still skip it. Only passes that can change that kind of entry are listed, each with a line saying what it does to it (swaps the material for a copy, replaces the mesh, changes import settings during the build, ...). Lists are empty by default, so existing protection is unchanged. A protected object only takes an optimized copy of a material or mesh when every pass that changed that copy is on its allow lists, so a material shared with unprotected objects that other passes also changed stays original on the protected object.
+
 ## [1.2.0-beta.10] - 2026-10-13
 
 ### Added

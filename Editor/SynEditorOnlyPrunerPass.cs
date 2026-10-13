@@ -18,6 +18,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Nukes all EditorOnly-tagged objects and orphaned build artifacts in the temporary staging scene, completely preventing their textures and meshes from leaking into the final world file.";
         public override string Category => "Structural Cleanup";
         public override int Priority => 1; // Runs first before all other passes!
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects;
+        public override string ProtectionEffect => "Removes EditorOnly objects and renderers with nothing to draw.";
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
