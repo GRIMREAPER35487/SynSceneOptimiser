@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.4] - 2026-10-12
+
+### Added
+- **VRAM Analyzer: what uses each environment item** - Click a lightmap, probe, skybox or light volume texture to see what references it in the trace panel: the object and the component field (e.g. `Bakery Volume.bakedTexture0`), the reflection probe, or how many renderers use a lightmap. Copy Page Details on the Environment tab includes a "Used By" column.
+
 ## [1.2.0-beta.3] - 2026-10-12
 
 ### Fixed
