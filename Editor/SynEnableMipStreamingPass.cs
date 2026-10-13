@@ -347,6 +347,27 @@ namespace Synthos.SynSceneOptimizer
                             importer.mipmapFilter = (TextureImporterMipFilter)entry.OriginalMipFilter;
                             changed = true;
                         }
+                        if (entry.OriginalMaxSize > 0)
+                        {
+                            if (string.IsNullOrEmpty(entry.MaxSizePlatform))
+                            {
+                                if (importer.maxTextureSize != entry.OriginalMaxSize)
+                                {
+                                    importer.maxTextureSize = entry.OriginalMaxSize;
+                                    changed = true;
+                                }
+                            }
+                            else
+                            {
+                                TextureImporterPlatformSettings ps = importer.GetPlatformTextureSettings(entry.MaxSizePlatform);
+                                if (ps.overridden && ps.maxTextureSize != entry.OriginalMaxSize)
+                                {
+                                    ps.maxTextureSize = entry.OriginalMaxSize;
+                                    importer.SetPlatformTextureSettings(ps);
+                                    changed = true;
+                                }
+                            }
+                        }
 
                         if (changed)
                         {

@@ -4,6 +4,9 @@ All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versio
 
 ## [1.2.0-beta.5] - 2026-10-12
 
+### Added
+- **Lighting Texture Size Limits** (new pass, Memory & Assets) - Caps directional lightmaps (default 2048 on PC, 1024 on Quest) and reflection probe cubemaps (default 128 per face) for the build. A directional lightmap only stores which way the light comes from and probes give blurry reflections, so both lose little at these sizes: on a 4096 directional lightmap plus 25 probes at 256 this saves about 25 MB. Each cap can be changed or turned off per platform. Like Mip Streaming, the import settings are changed for the build or Play Mode only and restored afterwards (also after a crash or restart). Not run in previews.
+
 ### Fixed
 - **VRAM Analyzer counted VRC Light Volumes source textures** - Each Light Volume Instance keeps its three baked volume textures, but VRC Light Volumes 3.x packs them into its atlas and removes them from the build, so only the atlas ships. They are no longer counted when the installed Light Volumes version does this (older versions that keep them are still counted).
 
