@@ -2,6 +2,19 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.3] - 2026-10-12
+
+### Fixed
+- **VRAM Analyzer counts what the scene actually loads** - It used to read only mesh and skinned mesh renderers. It now follows every component's references like the texture pass does: particles, trails and lines, UI images, sprites, terrain (layers, splat maps, heightmap), light cookies, camera render textures, Udon and other scripts, and materials swapped in by animations. Objects tagged EditorOnly are skipped (they are stripped from builds), mesh colliders no longer count as GPU memory, and a texture used in several places is counted once.
+- **Environment is complete and limited to the scanned scene** - Adds shadowmasks, custom and realtime reflection probes, and baked lighting referenced by components (Bakery maps, light volumes). With several scenes open, only this scene's lightmaps and probes are counted. HDR textures are estimated as BC6H on PC, and render textures include their depth buffer.
+- **Report no longer disappears** on entering Play Mode or after a script recompile.
+- **Large scenes no longer lag the window** - Lists only draw the rows on screen.
+- **Markers showed as boxes** - Emoji replaced with coloured markers and Unity's own icons.
+
+### Changed
+- **VRAM Analyzer** - Search box on the lists, sortable Environment tab with a total per type (lightmaps, probes, skybox, ...), asset path on hover, and the header shows which platform the sizes are for. Changing "Estimate Memory For" rescans right away.
+- The preview's Before/After numbers use the same scan, so they now include particles, UI and the rest, and leave out EditorOnly objects.
+
 ## [1.2.0-beta.2] - 2026-10-12
 
 ### Fixed
