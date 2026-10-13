@@ -19,10 +19,40 @@ namespace Synthos.SynSceneOptimizer
             public bool StreamingWasOff;
             public bool MipmapsWereOff;
             public int OriginalMipFilter = -1;
-            // Max size lowered by Lighting Texture Size Limits: the original value, and the platform override it was
+            // Max size lowered by Lighting Texture Size Limits or the Unused Texture Shrinker: the original value, and the platform override it was
             // set on ("" for the default setting)
             public int OriginalMaxSize = -1;
             public string MaxSizePlatform = "";
+        }
+
+        /// <summary>
+        /// Lowers the max size that applies to this platform: the platform override if there is one, else the
+        /// default. Records the original value in the journal entry. Returns false if it is already small enough.
+        /// </summary>
+        public static bool LimitMaxSize(TextureImporter importer, string platformName, int cap, Entry entry)
+        {
+            TextureImporterPlatformSettings ps = importer.GetPlatformTextureSettings(platformName);
+            if (ps.overridden)
+            {
+                if (ps.maxTextureSize <= cap) return false;
+                if (entry.OriginalMaxSize < 0)
+                {
+                    entry.OriginalMaxSize = ps.maxTextureSize;
+                    entry.MaxSizePlatform = platformName;
+                }
+                ps.maxTextureSize = cap;
+                importer.SetPlatformTextureSettings(ps);
+                return true;
+            }
+
+            if (importer.maxTextureSize <= cap) return false;
+            if (entry.OriginalMaxSize < 0)
+            {
+                entry.OriginalMaxSize = importer.maxTextureSize;
+                entry.MaxSizePlatform = "";
+            }
+            importer.maxTextureSize = cap;
+            return true;
         }
 
         public static Dictionary<string, Entry> Load()

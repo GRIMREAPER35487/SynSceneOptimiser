@@ -101,7 +101,7 @@ namespace Synthos.SynSceneOptimizer
                     if (string.IsNullOrEmpty(path) || !(AssetImporter.GetAtPath(path) is TextureImporter importer)) continue;
 
                     SynImporterRevertJournal.Entry entry = journal.TryGetValue(path, out var existing) ? existing : new SynImporterRevertJournal.Entry();
-                    if (!LimitMaxSize(importer, importerPlatform, cap, entry)) continue;
+                    if (!SynImporterRevertJournal.LimitMaxSize(importer, importerPlatform, cap, entry)) continue;
 
                     // Journaled before the reimport, so a crash mid-build still gets reverted
                     journal[path] = entry;
@@ -136,37 +136,7 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
-        /// <summary>
-        /// Lowers the max size that applies to this platform: the platform override if there is one, else the
-        /// default. Records the original value in the journal entry. Returns false if it is already small enough.
-        /// </summary>
-        private static bool LimitMaxSize(TextureImporter importer, string platformName, int cap, SynImporterRevertJournal.Entry entry)
-        {
-            TextureImporterPlatformSettings ps = importer.GetPlatformTextureSettings(platformName);
-            if (ps.overridden)
-            {
-                if (ps.maxTextureSize <= cap) return false;
-                if (entry.OriginalMaxSize < 0)
-                {
-                    entry.OriginalMaxSize = ps.maxTextureSize;
-                    entry.MaxSizePlatform = platformName;
-                }
-                ps.maxTextureSize = cap;
-                importer.SetPlatformTextureSettings(ps);
-                return true;
-            }
-
-            if (importer.maxTextureSize <= cap) return false;
-            if (entry.OriginalMaxSize < 0)
-            {
-                entry.OriginalMaxSize = importer.maxTextureSize;
-                entry.MaxSizePlatform = "";
-            }
-            importer.maxTextureSize = cap;
-            return true;
-        }
-
-        private static long EstimateBytes(Texture tex)
+        internal static long EstimateBytes(Texture tex)
         {
             int faces = tex is Cubemap ? 6 : 1;
             int mips = tex is Texture2D t2d ? t2d.mipmapCount : tex is Cubemap cube ? cube.mipmapCount : 1;
