@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.5] - 2026-10-12
+
+### Fixed
+- **VRAM Analyzer counted VRC Light Volumes source textures** - Each Light Volume Instance keeps its three baked volume textures, but VRC Light Volumes 3.x packs them into its atlas and removes them from the build, so only the atlas ships. They are no longer counted when the installed Light Volumes version does this (older versions that keep them are still counted).
+
 ## [1.2.0-beta.4] - 2026-10-12
 
 ### Added

@@ -1582,7 +1582,10 @@ namespace Synthos.SynSceneOptimizer
         {
             if (go == null || go.CompareTag("EditorOnly")) return;
 
-            foreach (Component component in go.GetComponents<Component>())
+            Component[] components = go.GetComponents<Component>();
+            HashSet<UnityEngine.Object> strippedAtBuild = GetReferencesStrippedAtBuild(components);
+
+            foreach (Component component in components)
             {
                 // Collider meshes are physics data, not GPU memory
                 if (component == null || component is Transform || component is MeshCollider) continue;
@@ -1606,7 +1609,8 @@ namespace Synthos.SynSceneOptimizer
                 SerializedProperty iterator = new SerializedObject(component).GetIterator();
                 while (iterator.Next(true))
                 {
-                    if (iterator.propertyType == SerializedPropertyType.ObjectReference && iterator.objectReferenceValue != null)
+                    if (iterator.propertyType == SerializedPropertyType.ObjectReference && iterator.objectReferenceValue != null
+                        && (strippedAtBuild == null || !strippedAtBuild.Contains(iterator.objectReferenceValue)))
                     {
                         ctx.CurrentVia = $"{ObjectNames.NicifyVariableName(component.GetType().Name)}.{iterator.propertyPath}";
                         VisitReference(iterator.objectReferenceValue, component, ctx);
@@ -1618,6 +1622,48 @@ namespace Synthos.SynSceneOptimizer
             {
                 WalkGameObject(child.gameObject, ctx);
             }
+        }
+
+        // VRC Light Volumes (3.x) packs each volume's baked textures into its atlas and clears them from the Light
+        // Volume Instance (and its Udon variables) when building, so they never ship. Older versions keep them.
+        private static bool? lightVolumesStripsSources;
+
+        private static bool LightVolumesStripsSourceTextures()
+        {
+            if (lightVolumesStripsSources.HasValue) return lightVolumesStripsSources.Value;
+            bool strips = false;
+            foreach (Type type in TypeCache.GetTypesWithAttribute<InitializeOnLoadAttribute>())
+            {
+                if (type.Name == "LightVolumePreprocessor" &&
+                    type.GetMethod("ClearLightVolumeBuildOnlySerializedReferences", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public) != null)
+                {
+                    strips = true;
+                    break;
+                }
+            }
+            lightVolumesStripsSources = strips;
+            return strips;
+        }
+
+        /// <summary>
+        /// References on this GameObject that a build step removes before the scene is saved into the build.
+        /// </summary>
+        private static HashSet<UnityEngine.Object> GetReferencesStrippedAtBuild(Component[] components)
+        {
+            HashSet<UnityEngine.Object> stripped = null;
+            foreach (Component component in components)
+            {
+                if (component == null || component.GetType().Name != "LightVolumeInstance" || !LightVolumesStripsSourceTextures()) continue;
+                var so = new SerializedObject(component);
+                foreach (string field in new[] { "Texture0", "Texture1", "Texture2" })
+                {
+                    UnityEngine.Object value = so.FindProperty(field)?.objectReferenceValue;
+                    if (value == null) continue;
+                    if (stripped == null) stripped = new HashSet<UnityEngine.Object>();
+                    stripped.Add(value);
+                }
+            }
+            return stripped;
         }
 
         private void VisitReference(UnityEngine.Object obj, Component user, ScanContext ctx)
