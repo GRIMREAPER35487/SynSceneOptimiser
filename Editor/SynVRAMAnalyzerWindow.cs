@@ -99,6 +99,7 @@ namespace Synthos.SynSceneOptimizer
             public string Type;
             public string Details;
             public long VramSize;
+            public List<string> References = new List<string>();
         }
 
         [System.Serializable]
@@ -144,6 +145,7 @@ namespace Synthos.SynSceneOptimizer
             public string Type;
             public string Details;
             public long VramSize;
+            public List<string> References = new List<string>();
         }
 
         [System.Serializable]
@@ -481,10 +483,10 @@ namespace Synthos.SynSceneOptimizer
 
                 case 3: // Lightmaps & Probes (Environment)
                     sb.AppendLine("VRAM Analyzer - Environment Assets List");
-                    sb.AppendLine("Name\tType\tDetails\tVRAM Size\tPath");
+                    sb.AppendLine("Name\tType\tDetails\tVRAM Size\tPath\tUsed By");
                     foreach (var env in envReport)
                     {
-                        sb.AppendLine($"{env.Name}\t{env.Type}\t{env.Details}\t{FormatBytes(env.VramSize)}\t{AssetDatabase.GetAssetPath(env.Asset)}");
+                        sb.AppendLine($"{env.Name}\t{env.Type}\t{env.Details}\t{FormatBytes(env.VramSize)}\t{AssetDatabase.GetAssetPath(env.Asset)}\t{string.Join("; ", env.References)}");
                     }
                     break;
 
@@ -616,7 +618,8 @@ namespace Synthos.SynSceneOptimizer
                         Name = sEnv.Name,
                         Type = sEnv.Type,
                         Details = sEnv.Details,
-                        VramSize = sEnv.VramSize
+                        VramSize = sEnv.VramSize,
+                        References = sEnv.References ?? new List<string>()
                     };
                     envReport.Add(entry);
                 }
@@ -737,7 +740,8 @@ namespace Synthos.SynSceneOptimizer
                         Name = env.Name,
                         Type = env.Type,
                         Details = env.Details,
-                        VramSize = env.VramSize
+                        VramSize = env.VramSize,
+                        References = new List<string>(env.References)
                     };
                     report.EnvAssets.Add(sEnv);
                 }
@@ -1080,14 +1084,11 @@ namespace Synthos.SynSceneOptimizer
             var rows = envReport.FindAll(e => MatchesSearch(e.Name) || MatchesSearch(e.Type));
             DrawVirtualRows(rows, (row, env, index) =>
             {
-                DrawRowBackground(row, index, false);
+                DrawRowBackground(row, index, selectedReportEntry == env);
                 Rect[] c = SplitColumns(row, 170, 190, 80);
                 Rect name = DrawMarker(c[0], env.VramSize >= 8 * 1024 * 1024 ? DangerColor : Color.clear);
                 string path = env.Asset != null ? AssetDatabase.GetAssetPath(env.Asset) : "";
-                if (GUI.Button(name, new GUIContent(env.Name, path), rowLabelStyle) && env.Asset != null)
-                {
-                    EditorGUIUtility.PingObject(env.Asset);
-                }
+                if (GUI.Button(name, new GUIContent(env.Name, path), rowLabelStyle)) SelectAsset(env);
                 GUI.Label(c[1], env.Type, rowLabelStyle);
                 GUI.Label(c[2], new GUIContent(env.Details, env.Details), rowLabelStyle);
                 GUI.Label(c[3], FormatBytes(env.VramSize), rowLabelStyle);
@@ -1153,13 +1154,14 @@ namespace Synthos.SynSceneOptimizer
 
             if (selectedReportEntry == null)
             {
-                GUILayout.Label("Select a Texture or Mesh above to inspect its active scene reference links.", EditorStyles.miniLabel);
+                GUILayout.Label("Select a texture, mesh or environment item above to see what in the scene uses it.", EditorStyles.miniLabel);
                 return;
             }
 
             string assetPath = "";
             if (selectedReportEntry is TextureReportEntry texEntry) assetPath = AssetDatabase.GetAssetPath(texEntry.TextureAsset);
             else if (selectedReportEntry is MeshReportEntry meshEntry) assetPath = AssetDatabase.GetAssetPath(meshEntry.MeshAsset);
+            else if (selectedReportEntry is EnvReportEntry envEntry && envEntry.Asset != null) assetPath = AssetDatabase.GetAssetPath(envEntry.Asset);
 
             if (!string.IsNullOrEmpty(assetPath))
             {
@@ -1260,6 +1262,11 @@ namespace Synthos.SynSceneOptimizer
                         selectedReferences.Add($"[Scene Object] {path}");
                     }
                 }
+            }
+            else if (entry is EnvReportEntry env)
+            {
+                if (env.Asset != null) EditorGUIUtility.PingObject(env.Asset);
+                if (env.References != null) selectedReferences.AddRange(env.References);
             }
             else if (entry is MeshReportEntry mesh)
             {
@@ -1383,6 +1390,9 @@ namespace Synthos.SynSceneOptimizer
             public readonly HashSet<Material> VisitedMaterials = new HashSet<Material>();
             public readonly HashSet<AnimationClip> VisitedClips = new HashSet<AnimationClip>();
             public readonly HashSet<TerrainData> VisitedTerrains = new HashSet<TerrainData>();
+            public readonly Dictionary<UnityEngine.Object, EnvReportEntry> Environment = new Dictionary<UnityEngine.Object, EnvReportEntry>();
+            // How the component being walked references the current object, e.g. "Bakery Volume.bakedTexture0"
+            public string CurrentVia = "";
             public bool ShowProgress;
         }
 
@@ -1426,14 +1436,17 @@ namespace Synthos.SynSceneOptimizer
             LightmapData[] lightmaps = LightmapSettings.lightmaps;
             if (lightmaps != null && lightmaps.Length > 0)
             {
-                HashSet<int> used = CountLoadedScenes() > 1 ? GetUsedLightmapIndices(scene) : null;
+                Dictionary<int, int> users = CountLightmapUsers(scene);
+                bool onlyUsed = CountLoadedScenes() > 1;
                 for (int i = 0; i < lightmaps.Length; i++)
                 {
                     LightmapData lm = lightmaps[i];
-                    if (lm == null || (used != null && !used.Contains(i))) continue;
-                    AddEnvironmentTexture(ctx, lm.lightmapColor, $"Lightmap {i}", "Lightmap");
-                    AddEnvironmentTexture(ctx, lm.lightmapDir, $"Directional Lightmap {i}", "Directional Lightmap");
-                    AddEnvironmentTexture(ctx, lm.shadowMask, $"Shadowmask {i}", "Shadowmask");
+                    users.TryGetValue(i, out int userCount);
+                    if (lm == null || (onlyUsed && userCount == 0)) continue;
+                    string source = $"Scene lighting data, used by {userCount} renderer(s) and terrain(s)";
+                    AddEnvironmentTexture(ctx, lm.lightmapColor, $"Lightmap {i}", "Lightmap", source);
+                    AddEnvironmentTexture(ctx, lm.lightmapDir, $"Directional Lightmap {i}", "Directional Lightmap", source);
+                    AddEnvironmentTexture(ctx, lm.shadowMask, $"Shadowmask {i}", "Shadowmask", source);
                 }
             }
 
@@ -1442,20 +1455,21 @@ namespace Synthos.SynSceneOptimizer
                 foreach (ReflectionProbe probe in root.GetComponentsInChildren<ReflectionProbe>(true))
                 {
                     if (probe == null || IsEditorOnly(probe.transform)) continue;
+                    string probePath = $"{GetHierarchyPathStatic(probe.transform)} (Reflection Probe)";
                     switch (probe.mode)
                     {
                         case ReflectionProbeMode.Baked:
-                            AddEnvironmentTexture(ctx, probe.bakedTexture, probe.name, "Reflection Probe");
+                            AddEnvironmentTexture(ctx, probe.bakedTexture, probe.name, "Reflection Probe", probePath);
                             break;
                         case ReflectionProbeMode.Custom:
-                            AddEnvironmentTexture(ctx, probe.customBakedTexture, probe.name, "Reflection Probe (Custom)");
+                            AddEnvironmentTexture(ctx, probe.customBakedTexture, probe.name, "Reflection Probe (Custom)", probePath);
                             break;
                         case ReflectionProbeMode.Realtime:
                             // Rendered at runtime into a cubemap of the probe's resolution (HDR, with mipmaps)
                             int res = probe.resolution;
                             int bytesPerPixel = probe.hdr ? 8 : 4;
                             long size = (long)(res * (double)res * 6 * bytesPerPixel * 4.0 / 3.0);
-                            AddEnvironmentEntry(ctx, probe, probe.name, "Reflection Probe (Realtime)", $"{res}x{res} cubemap, rendered at runtime", size);
+                            AddEnvironmentEntry(ctx, probe, probe.name, "Reflection Probe (Realtime)", $"{res}x{res} cubemap, rendered at runtime", size).References.Add(probePath);
                             break;
                     }
                 }
@@ -1470,28 +1484,70 @@ namespace Synthos.SynSceneOptimizer
                 {
                     if (ShaderUtil.GetPropertyType(skyboxMat.shader, i) != ShaderUtil.ShaderPropertyType.TexEnv) continue;
                     Texture tex = skyboxMat.GetTexture(ShaderUtil.GetPropertyName(skyboxMat.shader, i));
-                    if (tex != null) AddEnvironmentTexture(ctx, tex, $"Skybox: {tex.name}", "Skybox");
+                    if (tex != null) AddEnvironmentTexture(ctx, tex, $"Skybox: {tex.name}", "Skybox", $"Lighting settings: skybox material '{skyboxMat.name}'");
                 }
             }
         }
 
-        private void AddEnvironmentTexture(ScanContext ctx, Texture tex, string name, string type)
+        private void AddEnvironmentTexture(ScanContext ctx, Texture tex, string name, string type, string source)
         {
-            if (tex == null || !ctx.Counted.Add(tex)) return;
-            AddEnvironmentEntry(ctx, tex, name, type, DescribeTexture(tex), EstimateTextureSize(tex));
+            if (tex == null) return;
+            if (ctx.Counted.Add(tex))
+            {
+                AddEnvironmentEntry(ctx, tex, name, type, DescribeTexture(tex), EstimateTextureSize(tex));
+            }
+            AddEnvironmentReference(ctx, tex, source);
         }
 
-        private static void AddEnvironmentEntry(ScanContext ctx, UnityEngine.Object asset, string name, string type, string details, long size)
+        private static EnvReportEntry AddEnvironmentEntry(ScanContext ctx, UnityEngine.Object asset, string name, string type, string details, long size)
         {
-            ctx.Results.EnvAssets.Add(new EnvReportEntry
+            var entry = new EnvReportEntry
             {
                 Asset = asset,
                 Name = name,
                 Type = type,
                 Details = details,
                 VramSize = size
-            });
+            };
+            ctx.Results.EnvAssets.Add(entry);
             ctx.Results.EnvBytes += size;
+            if (asset != null) ctx.Environment[asset] = entry;
+            return entry;
+        }
+
+        private static void AddEnvironmentReference(ScanContext ctx, UnityEngine.Object asset, string reference)
+        {
+            if (asset == null || string.IsNullOrEmpty(reference)) return;
+            if (ctx.Environment.TryGetValue(asset, out EnvReportEntry entry) && !entry.References.Contains(reference))
+            {
+                entry.References.Add(reference);
+            }
+        }
+
+        private static Dictionary<int, int> CountLightmapUsers(Scene scene)
+        {
+            var users = new Dictionary<int, int>();
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
+                {
+                    // 0xFFFE / 0xFFFF mark "not lightmapped"
+                    if (r.lightmapIndex >= 0 && r.lightmapIndex < 0xFFFE)
+                    {
+                        users.TryGetValue(r.lightmapIndex, out int n);
+                        users[r.lightmapIndex] = n + 1;
+                    }
+                }
+                foreach (Terrain t in root.GetComponentsInChildren<Terrain>(true))
+                {
+                    if (t.lightmapIndex >= 0 && t.lightmapIndex < 0xFFFE)
+                    {
+                        users.TryGetValue(t.lightmapIndex, out int n);
+                        users[t.lightmapIndex] = n + 1;
+                    }
+                }
+            }
+            return users;
         }
 
         private static int CountLoadedScenes()
@@ -1502,24 +1558,6 @@ namespace Synthos.SynSceneOptimizer
                 if (SceneManager.GetSceneAt(i).isLoaded) loaded++;
             }
             return loaded;
-        }
-
-        private static HashSet<int> GetUsedLightmapIndices(Scene scene)
-        {
-            var used = new HashSet<int>();
-            foreach (GameObject root in scene.GetRootGameObjects())
-            {
-                foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
-                {
-                    // 0xFFFE / 0xFFFF mark "not lightmapped"
-                    if (r.lightmapIndex >= 0 && r.lightmapIndex < 0xFFFE) used.Add(r.lightmapIndex);
-                }
-                foreach (Terrain t in root.GetComponentsInChildren<Terrain>(true))
-                {
-                    if (t.lightmapIndex >= 0 && t.lightmapIndex < 0xFFFE) used.Add(t.lightmapIndex);
-                }
-            }
-            return used;
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -1558,6 +1596,7 @@ namespace Synthos.SynSceneOptimizer
                         {
                             foreach (var key in AnimationUtility.GetObjectReferenceCurve(clip, binding))
                             {
+                                ctx.CurrentVia = $"animation '{clip.name}'";
                                 VisitReference(key.value, component, ctx);
                             }
                         }
@@ -1569,6 +1608,7 @@ namespace Synthos.SynSceneOptimizer
                 {
                     if (iterator.propertyType == SerializedPropertyType.ObjectReference && iterator.objectReferenceValue != null)
                     {
+                        ctx.CurrentVia = $"{ObjectNames.NicifyVariableName(component.GetType().Name)}.{iterator.propertyPath}";
                         VisitReference(iterator.objectReferenceValue, component, ctx);
                     }
                 }
@@ -1631,13 +1671,19 @@ namespace Synthos.SynSceneOptimizer
 
             if (!ctx.Textures.TryGetValue(tex, out TextureReportEntry entry))
             {
-                if (!ctx.Counted.Add(tex)) return; // already counted as lighting
+                if (!ctx.Counted.Add(tex))
+                {
+                    // Already counted as lighting: note who else references it
+                    if (user != null) AddEnvironmentReference(ctx, tex, DescribeReference(user, mat, ctx));
+                    return;
+                }
 
                 // Baked lighting referenced by components (Bakery storage, light volumes) is environment memory
                 string path = AssetDatabase.GetAssetPath(tex);
                 if (!string.IsNullOrEmpty(path) && SynProtectionData.IsBakeryAsset(path, tex))
                 {
                     AddEnvironmentEntry(ctx, tex, tex.name, ClassifyLightingTexture(tex, path), DescribeTexture(tex), EstimateTextureSize(tex));
+                    if (user != null) AddEnvironmentReference(ctx, tex, DescribeReference(user, mat, ctx));
                     return;
                 }
 
@@ -1662,6 +1708,12 @@ namespace Synthos.SynSceneOptimizer
                 string objectPath = GetHierarchyPathStatic(user.transform);
                 if (!entry.ReferencingGameObjectPaths.Contains(objectPath)) entry.ReferencingGameObjectPaths.Add(objectPath);
             }
+        }
+
+        private static string DescribeReference(Component user, Material mat, ScanContext ctx)
+        {
+            string through = mat != null ? $", material '{mat.name}'" : "";
+            return $"{GetHierarchyPathStatic(user.transform)} ({ctx.CurrentVia}{through})";
         }
 
         private static string ClassifyLightingTexture(Texture tex, string path)
