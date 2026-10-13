@@ -5,6 +5,7 @@ All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versio
 ## [1.2.0-beta.5] - 2026-10-12
 
 ### Added
+- **Light Volumes Atlas Auto Re-pack** (new General Fix) - VRC Light Volumes only applies new bakes and the Downscale Volumes setting when its atlas is packed, and a build ships the atlas file as it is, so an atlas packed before the latest bake or before Downscale Volumes was turned on ships old, full-size data (seen on a world shipping a 48 MB atlas from three months before its current bake with x2 downscale enabled). Before a VRChat build or entering Play Mode, an out-of-date atlas is now re-packed with Light Volumes' own "Pack Light Volumes" action; the build is stopped once with a message so it can be started again when packing finishes. The pass shows the atlas status and has a "Re-pack Now" button.
 - **Lighting Texture Size Limits** (new pass, Memory & Assets) - Caps directional lightmaps (default 2048 on PC, 1024 on Quest) and reflection probe cubemaps (default 128 per face) for the build. A directional lightmap only stores which way the light comes from and probes give blurry reflections, so both lose little at these sizes: on a 4096 directional lightmap plus 25 probes at 256 this saves about 25 MB. Each cap can be changed or turned off per platform. Like Mip Streaming, the import settings are changed for the build or Play Mode only and restored afterwards (also after a crash or restart). Not run in previews.
 
 ### Fixed
