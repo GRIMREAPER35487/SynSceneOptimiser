@@ -2,6 +2,12 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.12] - 2026-10-13
+
+### Fixed
+- **Texture Deduplicator missed duplicate TextMesh Pro fonts** - A font atlas lives inside its font asset and text components point at the font, not the atlas, so two copies of the same font (e.g. TextMesh Pro's LiberationSans SDF and ProTV's copy of it) both shipped their 1 MB atlas. Identical font assets (same glyphs, characters, face data and atlas pixels) are now merged: text components are pointed at one font and a material on its atlas (the kept font's own material when it looks the same, otherwise a copy of the text's material, so text looks unchanged). A text component whose material can't be moved is left exactly as it was. Dynamic fonts, protected text and fonts something else references are left alone.
+- **Texture Deduplicator redirected materials for nothing** - When the copy being merged away was also used somewhere the optimizer can't change, both copies shipped anyway, but materials were still redirected (145 slots in a test world). Those duplicates are now left alone.
+
 ## [1.2.0-beta.11] - 2026-10-13
 
 ### Added
