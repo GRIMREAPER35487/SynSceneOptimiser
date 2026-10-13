@@ -2,6 +2,35 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0] - 2026-10-13
+
+Everything from 1.2.0-beta.1 to beta.15. The beta entries below have the details. Requires Synthos Texture Analysis 1.3.0, which VCC installs automatically.
+
+### Upgrading from 1.1.0
+- The Texture Complexity Compressor makes different decisions now (see below), and every texture is scored again once. Projects that changed the old min/max resolution or detail thresholds start on the **Custom** preset with those values; pick a preset to use the new decisions. Use **Generate Preview** in the pass settings to see the result before building.
+
+### Added
+- **Texture Complexity Compressor rebuilt on the Avatar Compressor** - It uses the shared Synthos Texture Analysis package and makes the Avatar Compressor's decisions: the size comes from the detail score (the Combined method, on the GPU when available), the format is chosen from detail and alpha (DXT1/BC5/BC7 on PC, ASTC on Quest) with a test that steps up a format when the cheap one would band or show blocky edges, normal maps are converted to the right layout, and textures are made from the original image file. It has the Avatar Compressor's presets (High Quality, Quality, Balanced, Aggressive, Maximum, Custom) and settings: texture type filters, size filters, Respect Import Max Size and Format, Reformat Filtered Textures, Skip Unknown Uncompressed Textures, Use Source Files and the analysis and resize backends.
+  - **Size in the world** - Measures how large each texture appears on the meshes that use it, against what is visible from a viewing distance (100 cm on PC, 150 cm on Quest). Textures sharper than anyone can see are made smaller, and **Keep Visible Detail** keeps floors and walls from being shrunk below what is visible (low-detail textures in proportion to their detail). A warning says when Max Resolution is what keeps a texture below that.
+  - **Frozen Textures** - Set a texture's divisor and format by hand, or skip it.
+  - **Preview** - Lists every texture in the open scene with its detail score, planned size, size in the world, format, the memory before and after, and why skipped textures are skipped.
+- **Unused Texture Shrinker** (new pass) - Textures that nothing in the world can ever draw are imported at 32x32 for the build only (e.g. Mochie Standard's 8192x8192 rain sheet, about 43 MB, which ships even with rain off). Each shader variant is compiled to see which textures it samples, and Udon programs are read to find every shader keyword and texture a script can change or read. Works on protected objects and video players too, without changing materials.
+- **Texture Deduplicator** (new pass) - Points materials at one copy of textures that are exact duplicates (same file contents and import settings), and merges identical TextMesh Pro fonts. Copies that something else still uses are left alone.
+- **Allowed passes on protected entries** - Each protected object, material, mesh and texture can allow chosen passes to work on it anyway.
+- **Lighting Texture Size Limits** (new pass) - Caps directional lightmaps (2048 on PC, 1024 on Quest) and reflection probes (128) for the build, then restores the import settings.
+- **Light Volumes Atlas Auto Re-pack** (new General Fix) - Re-packs an out-of-date VRC Light Volumes atlas before a build or Play Mode, so new bakes and Downscale Volumes actually ship.
+- **VRAM Analyzer** shows what uses each environment item (lightmaps, probes, skybox, light volumes), and the run report has an Environment row.
+
+### Changed
+- **VRAM Analyzer counts what the scene actually loads** - Every component's references (particles, UI, sprites, terrain, light cookies, render textures, Udon and other scripts, animated material swaps), not just mesh renderers; EditorOnly objects skipped; each texture counted once; complete environment for the scanned scene only. Search, sorting, totals per type and a platform label. The preview's Before/After uses the same scan.
+- **Color Palette materials** drop textures their shader never samples, instead of keeping everything from the material they were copied from.
+
+### Fixed
+- **Downscaled texture and audio copies were missing on the first run** - They only took effect on a later run, so a build right after changing textures shipped them at full size.
+- **Preview under-reported the VRAM saving** - It counted the lighting of both scenes; it now measures the copy alone.
+- **VRAM Analyzer** counted VRC Light Volumes source textures that are not shipped, lost its report on entering Play Mode, lagged on large scenes and showed markers as boxes.
+- **Normal maps scored almost no detail** (in Synthos Texture Analysis) - They are now decoded the way Unity's shaders do.
+
 ## [1.2.0-beta.15] - 2026-10-13
 
 ### Fixed
