@@ -64,6 +64,31 @@ namespace Synthos.SynSceneOptimizer
             return result;
         }
 
+        /// <summary>
+        /// Empties every texture slot the material's current variant never samples. For materials the optimizer
+        /// generates itself (no script can reach them). Returns how many slots were cleared.
+        /// </summary>
+        public static int ClearUnsampledTextures(Material mat, BuildTarget target)
+        {
+            if (mat == null || mat.shader == null) return 0;
+            HashSet<string> sampled = GetSampledTextures(mat.shader, mat.shaderKeywords, target);
+            if (sampled == null) return 0;
+
+            int cleared = 0;
+            int count = ShaderUtil.GetPropertyCount(mat.shader);
+            for (int i = 0; i < count; i++)
+            {
+                if (ShaderUtil.GetPropertyType(mat.shader, i) != ShaderUtil.ShaderPropertyType.TexEnv) continue;
+                string propName = ShaderUtil.GetPropertyName(mat.shader, i);
+                if (mat.GetTexture(propName) != null && !sampled.Contains(propName))
+                {
+                    mat.SetTexture(propName, null);
+                    cleared++;
+                }
+            }
+            return cleared;
+        }
+
         public static void SaveCache()
         {
             if (!cacheDirty || cache == null) return;
