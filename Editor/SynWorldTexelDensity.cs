@@ -116,21 +116,53 @@ namespace Synthos.SynSceneOptimizer
         }
 
         /// <summary>
-        /// Lowers the divisor (down to <paramref name="minDivisor"/>) while the result would be below the target
-        /// density. Only for textures with real detail: on a near-flat texture blur doesn't show.
+        /// Lowers the divisor (down to <paramref name="minDivisor"/>) while the result would be below the density the
+        /// texture's detail needs. Unlike on an avatar, a low-detail texture can cover a whole floor or wall, where blur
+        /// does show: it keeps visible detail in proportion to its score (half the target at half the low-detail
+        /// threshold), so only truly flat textures shrink freely.
         /// </summary>
         public static TextureAnalysisResult ApplyFloor(TextureAnalysisResult analysis, Vector2Int baseSize, SynTexelDensityInfo density, int minDivisor, float lowComplexityThreshold, TextureProcessor processor)
         {
-            if (analysis.NormalizedComplexity < lowComplexityThreshold) return analysis;
+            float wanted = density.TargetDensity * DetailFactor(analysis.NormalizedComplexity, lowComplexityThreshold);
+            if (wanted <= 0f) return analysis;
 
             int floor = Math.Max(1, minDivisor);
             int divisor = analysis.RecommendedDivisor;
-            while (divisor > floor && density.DensityAt(new Vector2Int(baseSize.x / divisor, baseSize.y / divisor)) < density.TargetDensity)
+            while (divisor > floor && density.DensityAt(new Vector2Int(baseSize.x / divisor, baseSize.y / divisor)) < wanted)
             {
                 divisor = Math.Max(floor, divisor / 2);
             }
             if (divisor == analysis.RecommendedDivisor) return analysis;
             return new TextureAnalysisResult(analysis.NormalizedComplexity, divisor, processor.CalculateNewDimensions(baseSize.x, baseSize.y, divisor));
+        }
+
+        /// <summary>Share of the target density a texture's detail needs: all of it at the low-detail threshold and above.</summary>
+        public static float DetailFactor(float complexity, float lowComplexityThreshold)
+        {
+            if (lowComplexityThreshold <= 0f || complexity >= lowComplexityThreshold) return 1f;
+            return Mathf.Clamp01(complexity / lowComplexityThreshold);
+        }
+
+        /// <summary>
+        /// True if Max Resolution is what keeps a detailed texture below the target density, while a larger image is
+        /// available. <paramref name="wanted"/> is the size that would reach it (doubling up to the full size).
+        /// </summary>
+        public static bool IsLimitedByMaxResolution(Vector2Int result, Vector2Int fullSize, int maxResolution, SynTexelDensityInfo density, float complexity, float lowComplexityThreshold, out Vector2Int wanted)
+        {
+            wanted = result;
+            if (complexity < lowComplexityThreshold
+                || Mathf.Max(result.x, result.y) < maxResolution
+                || Mathf.Max(fullSize.x, fullSize.y) <= Mathf.Max(result.x, result.y)
+                || density.DensityAt(result) >= density.TargetDensity)
+            {
+                return false;
+            }
+
+            while (wanted.x * 2 <= fullSize.x && wanted.y * 2 <= fullSize.y && density.DensityAt(wanted) < density.TargetDensity)
+            {
+                wanted *= 2;
+            }
+            return wanted != result;
         }
 
         /// <summary>
