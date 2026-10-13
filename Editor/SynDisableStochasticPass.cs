@@ -12,6 +12,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Disables Stochastic texture sampling on Android and iOS to optimize mobile performance and rendering.";
         public override string Category => "Texture Optimization";
         public override int Priority => 450;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Materials;
+        public override string ProtectionEffect => "Swaps the material for a copy with stochastic sampling off.";
 
         public override void Execute(Scene scene, List<Renderer> renderers)
         {

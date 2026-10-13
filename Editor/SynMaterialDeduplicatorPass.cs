@@ -20,6 +20,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Merges materials that are exact copies of each other (same shader, keywords, textures and values) so objects using them can batch together. Script and Udon references are updated too. The Material Audit shows what would merge.";
         public override string Category => "Batching & Instancing";
         public override int Priority => 8;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Materials;
+        public override string ProtectionEffect => "Points the renderer (and script references) at an identical material.";
         public override string Tab => "Optimizers";
 
         public override void Execute(Scene scene, List<Renderer> renderers)

@@ -16,6 +16,10 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Finds VRChat mirrors and strips heavy, non-essential layers (like UI, Water, Hand Gestures, and custom heavy layers) from their culling masks.";
 
         public override int Priority => 20; // Run early-mid
+
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects;
+
+        public override string ProtectionEffect => "Changes which layers the mirror reflects.";
         public override string Category => "Structural Cleanup";
 
         public override void Execute(Scene scene, List<Renderer> renderers)

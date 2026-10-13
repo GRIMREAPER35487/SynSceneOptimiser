@@ -13,6 +13,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Shrinks mesh VRAM by converting UV3 slice storage to compact Vector2 format, stripping unused vertex channels, and purging redundant mesh clones.";
         public override string Category => "Memory & Assets";
         public override int Priority => 1400; // Runs right after SynVRAMOptimizerPass (1300)
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Meshes;
+        public override string ProtectionEffect => "Replaces the mesh with a copy with compacted vertex data.";
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {

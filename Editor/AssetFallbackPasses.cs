@@ -12,6 +12,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Swaps heavy desktop shaders to optimized mobile equivalents when targeting mobile builds.";
         public override string Category => "Asset Fallback";
         public override int Priority => 1000;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Materials;
+        public override string ProtectionEffect => "Swaps the material for a copy using Mochie Standard Mobile (Quest builds).";
 
         // Individual toggles for every variant path
         [SerializeField] private bool includeStandardVariants = true;

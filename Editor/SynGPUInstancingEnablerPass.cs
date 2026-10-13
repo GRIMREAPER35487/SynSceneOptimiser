@@ -18,6 +18,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Enables GPU Instancing on materials across the scene to combine draw calls into instanced batches for identical meshes.";
         public override string Category => "Batching & Instancing";
         public override int Priority => 35; // Runs right after Mesh Deduplicator (30) and before Palette/Atlas passes (50)
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Materials;
+        public override string ProtectionEffect => "Swaps the material for a copy with GPU instancing on.";
         public override string Tab => "Optimizers";
 
         public override void Execute(Scene scene, List<Renderer> renderers)

@@ -19,6 +19,10 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Picks compression and load settings for the scene's audio clips from their length (streamed Vorbis for music, compressed Vorbis for medium clips, ADPCM for short effects). Works on cached copies, so your audio files are never modified.";
 
         public override int Priority => 30; // Run early-mid
+
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects;
+
+        public override string ProtectionEffect => "Points audio sources at optimized copies of their clips.";
         public override string Category => "Audio";
 
         private class PendingAudioCopy

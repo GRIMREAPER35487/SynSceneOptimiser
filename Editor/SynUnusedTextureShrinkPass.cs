@@ -25,6 +25,8 @@ namespace Synthos.SynSceneOptimizer
         // Before the texture compressor (45), palettes (50) and mip streaming (95): they then see a 32x32 texture and
         // leave it alone instead of making copies of it
         public override int Priority => 24;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Textures;
+        public override string ProtectionEffect => "Imports the texture at 32x32 during the build, only when nothing can draw it.";
         public override bool RunInPreview => false; // Temporarily edits project import settings
 
         private const int ShrunkSize = 32;

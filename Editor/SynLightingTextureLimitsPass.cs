@@ -20,6 +20,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Caps directional lightmaps and reflection probe cubemaps at a per-platform size for the build. The import settings are reverted afterwards.";
         public override string Category => "Memory & Assets";
         public override int Priority => 90; // Before Mip Streaming (95), which reimports the same lightmaps
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Textures;
+        public override string ProtectionEffect => "Lowers the max size in the import settings during the build.";
         public override bool RunInPreview => false; // Temporarily edits project import settings
 
         private static readonly string[] DirLabels = { "No limit", "512", "1024", "2048", "4096" };

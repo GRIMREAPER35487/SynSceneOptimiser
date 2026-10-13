@@ -20,6 +20,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Scans the scene for meshes exceeding a triangle threshold and simplifies them to reduce build size and improve runtime performance while preserving lightmaps and borders.";
         public override string Category => "Optimization";
         public override int Priority => 9000; // Run very late
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Meshes;
+        public override string ProtectionEffect => "Replaces the mesh with a simplified copy.";
 
         // Static fields for dry run results caching
         private static bool showDryRunResults = false;

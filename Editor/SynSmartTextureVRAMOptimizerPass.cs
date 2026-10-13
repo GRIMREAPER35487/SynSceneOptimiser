@@ -16,6 +16,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Intelligently analyzes scene texture frequency, complexity, and normal layouts to dynamically downscale flat/simple textures, prune unused material slots, and select optimal per-platform compression formats.";
         public override string Category => "Memory & Assets";
         public override int Priority => 45; // Runs before Color Palettes (50) so it never downscales generated palette textures
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Materials | SynProtectionTargets.Textures;
+        public override string ProtectionEffect => "Swaps the material for a copy using downscaled textures.";
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {

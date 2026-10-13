@@ -24,6 +24,7 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Re-packs the VRC Light Volumes atlas before builds and Play Mode when it is older than the volume bakes or does not match the Downscale Volumes setting.";
         public override string Category => "Lighting & Probes";
         public override int Priority => 11;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.None;
         public override string Tab => "General Fixes";
         public override bool RunInPreview => false;
 

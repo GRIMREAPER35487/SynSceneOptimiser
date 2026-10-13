@@ -19,6 +19,8 @@ namespace Synthos.SynSceneOptimizer
         public override string Description => "Finds geometrically identical meshes in the scene, consolidates them to share a single master Mesh instance, and queues their materials for GPU instancing.";
         public override string Category => "Structural Cleanup";
         public override int Priority => 30;
+        public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Meshes | SynProtectionTargets.Materials;
+        public override string ProtectionEffect => "Points the renderer at an identical mesh and may switch it to GPU instancing.";
 
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
