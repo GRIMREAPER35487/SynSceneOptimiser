@@ -2,6 +2,24 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.14] - 2026-10-13
+
+### Added
+- **The rest of the Avatar Compressor's settings in the Texture Complexity Compressor** - beta.13 copied its decisions and presets but not all of its settings. Now also:
+  - **Frozen Textures** - Freeze a texture from the preview to set its divisor (1x-16x) and format by hand, or to skip it. Stored in the protection settings by asset GUID, so renames and moves keep it.
+  - **Preview** - "Generate Preview" lists every texture in the open scene with its detail score, planned size, size in the world and format, the memory before and after, and the reason for every skipped texture, using the same decisions as the build.
+  - **Texture Filters** - Main Textures, Normal Maps, Emission Maps and Other Textures can each be turned off (a texture is processed if any slot using it is enabled).
+  - **Size Filters Use Source Size** and **Reformat Filtered Textures** - as in the Avatar Compressor.
+  - **Custom preset** - every value is editable: analysis strategy and weights, thresholds, divisors, resolutions, Force Power Of Two, Min Source Size, Skip If Smaller Than and the high-quality format.
+  - **Preferences** - Use Source Files, Analysis Backend and Resize Backend.
+  - **Max Resolution warning** - When Max Resolution keeps a detailed texture below what is visible, the build log and the preview say so, with the size that would reach it.
+
+### Changed
+- **Keep Visible Detail now covers low-detail textures** - Copied from the Avatar Compressor, it skipped textures below the low-detail threshold, which is fine on an avatar but not for a floor or wall: a wood floor scoring 15% went from 512 to 64. Low-detail textures now keep visible detail in proportion to their score (half the target at half the threshold), so only truly flat textures shrink freely.
+
+### Fixed
+- **Normal maps scored almost no detail** (Synthos Texture Analysis 1.3.0-beta.3) - Imported normal maps are stored packed (X in alpha, Y in green), but the detail score read them as plain RGB, so normal maps scored near 0% and always got the largest divisor. They are now decoded the way Unity's shaders do. Requires Synthos Texture Analysis 1.3.0-beta.3.
+
 ## [1.2.0-beta.13] - 2026-10-13
 
 ### Changed

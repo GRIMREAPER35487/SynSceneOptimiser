@@ -168,6 +168,8 @@ namespace Synthos.SynSceneOptimizer
         public List<string> protectedTextureNamePatterns = new List<string>();
         // Per-asset allow lists for protectedMaterials / protectedMeshes / protectedTextures
         public List<SynAssetAllowance> assetAllowances = new List<SynAssetAllowance>();
+        // Texture Complexity Compressor: textures with a manually chosen divisor/format, or skipped
+        public List<SynFrozenTexture> frozenTextures = new List<SynFrozenTexture>();
 
         // Persistent lists for Mesh Simplifier (Preservation and Skip lists)
         public List<SynPersistentObjectReference> simplifierPreserveList = new List<SynPersistentObjectReference>();
