@@ -82,6 +82,12 @@ namespace Synthos.SynSceneOptimizer
             Set(key, value.ToString(CultureInfo.InvariantCulture));
         }
 
+        /// <summary>True if the project has set this setting (as opposed to using the built-in default).</summary>
+        public static bool HasKey(string key)
+        {
+            return Values.ContainsKey(key);
+        }
+
         /// <summary>
         /// Removes a setting so its built-in default applies again.
         /// </summary>

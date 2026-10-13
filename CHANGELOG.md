@@ -2,6 +2,16 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.13] - 2026-10-13
+
+### Changed
+- **Texture Complexity Compressor makes the Avatar Compressor's decisions** - It shared the Avatar Compressor's detail score but sized and compressed textures its own way: everything was clamped between a fixed min and max resolution (so with a 512 maximum, a detailed 2048 texture lost as much as a flat one), the format was whatever the texture was imported with (uncompressed textures stayed uncompressed), and normal maps were not converted. It now uses the Avatar Compressor's pipeline: the size comes from the detail score through the same divisor curve and limits, emission keeps more detail, the format is chosen from detail and alpha (DXT1/BC7/BC5, ASTC on Quest) with the test for banding and blocky edges, normal maps go through the layout conversion, and textures are made from the original image file instead of re-compressing Unity's import. Textures that already have the right size and format are left as imported.
+- **Presets** - High Quality, Quality, Balanced, Aggressive and Maximum are the Avatar Compressor's presets (same values, same names). New projects use Balanced. Projects that had changed the old min/max resolution or threshold settings get a Custom preset with those values, so builds don't change until another preset is picked.
+
+### Added
+- **Size in the world** - Like the Avatar Compressor's on-avatar size, the compressor measures how many texture pixels each texture gets per cm on the meshes that use it (per triangle, from UV area against surface area), against what is visible from a viewing distance (default 100 cm on PC, 150 cm on Quest). A texture sharper than anyone can see (a 2048 texture on a mug) is made smaller, and a detailed texture on a large surface is not shrunk below what is visible ("Keep Visible Detail"). Textures mapped any other way (triplanar, world or local mapping, other UV sets, flipbooks, matcaps) are not measured.
+- **Advanced options** from the Avatar Compressor: Respect Import Max Size, Respect Import Format, Avoid Compression Artifacts and Skip Unknown Uncompressed Textures (uncompressed textures in unrecognized shader slots may be data such as lookup tables).
+
 ## [1.2.0-beta.12] - 2026-10-13
 
 ### Fixed
