@@ -704,7 +704,7 @@ namespace Synthos.SynSceneOptimizer
         /// material: other components (protected and video renderers, particles, UI, sprites, Udon/UdonSharp fields,
         /// lights, probes), the skybox, and materials/textures/sprites swapped in by animation clips.
         /// </summary>
-        private static HashSet<Texture2D> CollectTexturesUsedOutsideRedirectedRenderers(Scene scene, List<Renderer> renderers)
+        internal static HashSet<Texture2D> CollectTexturesUsedOutsideRedirectedRenderers(Scene scene, List<Renderer> renderers)
         {
             var redirected = new HashSet<Renderer>();
             foreach (Renderer r in renderers)

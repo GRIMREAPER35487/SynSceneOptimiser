@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.10] - 2026-10-13
+
+### Added
+- **Texture Deduplicator** (new pass, Memory & Assets) - Finds textures that are exact copies of each other (same image file contents and the same import settings, so the build would hold the same data twice, e.g. an asset pack imported several times) and points materials at one copy. Only the build copies of materials the optimizer may change are redirected; if something else still uses one of the copies (protected or video objects, UI, sprites, scripts), that copy is the one the others point at. Runs after the Texture Complexity Compressor, so identical downscaled copies are merged too.
+
 ## [1.2.0-beta.9] - 2026-10-12
 
 ### Added
