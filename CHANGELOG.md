@@ -2,6 +2,14 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.6] - 2026-10-12
+
+### Added
+- **Ghost Texture Purger clears textures behind disabled shader features** - A material keeps its texture in a slot even when the feature that reads it is turned off, and Unity still ships that texture. Mochie Standard, for example, fills `_RainSheet` with an 8192x8192 rain flipbook (about 43 MB of VRAM) on every material, rain on or off. The purger now compiles each material's actual shader variant, reads which textures it samples, and empties the slots it never reads on the build copy (rain, droplet and SSR textures with those features off, `_EmissionMap` on a Standard material without emission, and so on). Works with any shader. Each shader variant is checked once and cached; on the first build the check is limited to 3 minutes and the rest continues on the next build. Materials that a script or Udon behaviour references (directly or through its renderer) are left alone, since a script could turn the feature on at runtime. Can be turned off with "Clear Disabled Feature Textures" in the pass settings.
+
+### Changed
+- The Texture Complexity Compressor and Mip Streaming skip texture slots the purger emptied, so they no longer spend time on a texture that is leaving the build.
+
 ## [1.2.0-beta.5] - 2026-10-12
 
 ### Added

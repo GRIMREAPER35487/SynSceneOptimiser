@@ -17,6 +17,8 @@ namespace Synthos.SynSceneOptimizer
         public HashSet<string> TrackedKeywords { get; set; } = new HashSet<string>();
         // Serialized texture slots that don't exist on the shader; removed from the baked copy's m_TexEnvs
         public HashSet<string> PurgedTextureProperties { get; set; } = new HashSet<string>();
+        // Slots the shader declares but this variant never samples (feature keyword off); emptied on the baked copy
+        public HashSet<string> UnsampledTextureProperties { get; set; } = new HashSet<string>();
         public bool IsDirty { get; set; }
         public List<string> AppliedPassTags { get; private set; } = new List<string>();
 
@@ -283,6 +285,12 @@ namespace Synthos.SynSceneOptimizer
             return MaterialCache.Values;
         }
 
+        /// <summary>True when the Ghost Texture Purger emptied this slot because the shader never samples it.</summary>
+        public static bool IsUnsampledSlot(Material mat, string propName)
+        {
+            return mat != null && MaterialCache.TryGetValue(mat, out var state) && state.UnsampledTextureProperties.Contains(propName);
+        }
+
         public static SynVirtualMaterialState GetStagingState(Material mat)
         {
             if (mat == null) return null;
@@ -420,6 +428,12 @@ namespace Synthos.SynSceneOptimizer
                         purged.Sort(System.StringComparer.Ordinal);
                         bakeParams += "|purged:" + string.Join(",", purged);
                     }
+                    if (state.UnsampledTextureProperties.Count > 0)
+                    {
+                        var unsampled = new List<string>(state.UnsampledTextureProperties);
+                        unsampled.Sort(System.StringComparer.Ordinal);
+                        bakeParams += "|unsampled:" + string.Join(",", unsampled);
+                    }
                     string matHashKey = SynAssetCache.ComputeMaterialHash(state.OriginalMaterial, suffix, state.TrackedFloats, state.TrackedVectors, state.TrackedTextures, state.TrackedKeywords, extraParams: bakeParams);
 
                     if (SynAssetCache.TryGetCachedAsset<Material>(SynAssetCache.MaterialsCategory, matHashKey, cleanName, out Material cachedMat))
@@ -466,6 +480,12 @@ namespace Synthos.SynSceneOptimizer
                             {
                                 newMat.SetFloat(floatKvp.Key, floatKvp.Value);
                             }
+                        }
+
+                        // Applied after the tracked textures so a later pass can't put the texture back
+                        foreach (string propName in state.UnsampledTextureProperties)
+                        {
+                            if (newMat.HasProperty(propName)) newMat.SetTexture(propName, null);
                         }
 
                         // Apply tracked keywords

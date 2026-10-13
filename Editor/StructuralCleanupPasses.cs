@@ -262,14 +262,36 @@ namespace Synthos.SynSceneOptimizer
     {
         public override string Id => "GhostTexturePurgerPass";
         public override string Name => "Ghost Texture Purger";
-        public override string Description => "Cleans up unused texture serialized references inside material data files to save VRAM.";
+        public override string Description => "Cleans up unused texture serialized references inside material data files to save VRAM, including textures behind shader features that are turned off.";
         public override string Category => "Structural Cleanup";
         public override int Priority => 25;
 
+        private const string UnsampledKey = "GhostPurger_UnsampledSlots";
+        // Compiling variants is slow on the first build; the rest is picked up on later builds from the cache
+        private const double CompileBudgetSeconds = 180;
+
+        public override void DrawGUI(SynSceneOptimizerSettings settings)
+        {
+            bool unsampled = SynSceneOptimizerSettings.GetBool(UnsampledKey, true);
+            bool newUnsampled = EditorGUILayout.Toggle(new GUIContent("Clear Disabled Feature Textures", "Also clears textures the material's shader never samples because their feature is turned off (e.g. a rain or detail texture with rain/detail disabled). Each shader variant is compiled once to check, then cached. Materials that scripts can reach are left alone, since a script could turn the feature on."), unsampled);
+            if (newUnsampled != unsampled)
+            {
+                SynSceneOptimizerSettings.SetBool(UnsampledKey, newUnsampled);
+            }
+        }
+
         public override void Execute(Scene scene, List<Renderer> renderers)
         {
+            bool checkUnsampled = SynSceneOptimizerSettings.GetBool(UnsampledKey, true);
+            BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
+            HashSet<Material> scriptReachable = checkUnsampled ? CollectScriptReachableMaterials(scene) : new HashSet<Material>();
+
             HashSet<Material> processed = new HashSet<Material>();
             int purgedCount = 0;
+            int unsampledCount = 0;
+            int skippedForBudget = 0;
+            var unsampledTextures = new HashSet<Texture>();
+            var compileTimer = new System.Diagnostics.Stopwatch();
 
             foreach (Renderer r in renderers)
             {
@@ -290,6 +312,8 @@ namespace Synthos.SynSceneOptimizer
                     SerializedProperty texEnvs = serializedMat.FindProperty("m_SavedProperties.m_TexEnvs");
                     if (texEnvs != null && texEnvs.isArray)
                     {
+                        HashSet<string> sampled = null;
+                        bool sampledResolved = false;
                         bool clearedAny = false;
                         for (int i = texEnvs.arraySize - 1; i >= 0; i--)
                         {
@@ -301,12 +325,37 @@ namespace Synthos.SynSceneOptimizer
                                 // Only slots that still hold a texture cost anything; empty ghost slots are left alone
                                 SerializedProperty texProp = prop.FindPropertyRelative("second.m_Texture");
                                 bool holdsTexture = texProp != null && texProp.objectReferenceValue != null;
-                                if (holdsTexture && matState.TargetShader != null && !HasPropertyOnShader(matState.TargetShader, texPropName))
+                                if (!holdsTexture || matState.TargetShader == null) continue;
+
+                                if (!HasPropertyOnShader(matState.TargetShader, texPropName))
                                 {
                                     matState.PurgedTextureProperties.Add(texPropName);
                                     matState.IsDirty = true;
                                     clearedAny = true;
                                     purgedCount++;
+                                    continue;
+                                }
+
+                                if (!checkUnsampled || scriptReachable.Contains(mat)) continue;
+                                if (!sampledResolved)
+                                {
+                                    sampledResolved = true;
+                                    bool allowCompile = compileTimer.Elapsed.TotalSeconds < CompileBudgetSeconds;
+                                    compileTimer.Start();
+                                    sampled = SynShaderTextureUsage.GetSampledTextures(matState.TargetShader, matState.TrackedKeywords, target, allowCompile);
+                                    compileTimer.Stop();
+                                    if (sampled == null && !allowCompile) skippedForBudget++;
+                                }
+
+                                // The shader declares the slot, but this variant never reads it
+                                if (sampled != null && !sampled.Contains(texPropName))
+                                {
+                                    matState.UnsampledTextureProperties.Add(texPropName);
+                                    matState.TrackedTextures[texPropName] = null;
+                                    matState.IsDirty = true;
+                                    clearedAny = true;
+                                    unsampledCount++;
+                                    unsampledTextures.Add(texProp.objectReferenceValue as Texture);
                                 }
                             }
                         }
@@ -322,6 +371,8 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
+            SynShaderTextureUsage.SaveCache();
+
             if (purgedCount > 0)
             {
                 SynPipelineCompactor.LogChange(
@@ -329,6 +380,57 @@ namespace Synthos.SynSceneOptimizer
                     string.Format("Cleared {0} unused texture references from material serialization blocks.", purgedCount)
                 );
             }
+
+            if (unsampledCount > 0)
+            {
+                var largest = new List<Texture>(unsampledTextures);
+                largest.RemoveAll(t => t == null);
+                largest.Sort((a, b) => ((long)b.width * b.height).CompareTo((long)a.width * a.height));
+                var names = new List<string>();
+                for (int i = 0; i < largest.Count && i < 3; i++) names.Add($"{largest[i].name} ({largest[i].width}x{largest[i].height})");
+
+                SynPipelineCompactor.LogChange(
+                    "Ghost Texture Purger",
+                    $"Cleared {unsampledCount} texture slots whose shader feature is turned off ({unsampledTextures.Count} distinct textures, largest: {string.Join(", ", names)}). A texture leaves the build once nothing else references it."
+                );
+            }
+
+            if (skippedForBudget > 0)
+            {
+                Debug.Log($"[SYN SCENE OPTIMIZER] Ghost Texture Purger: checked shaders for {compileTimer.Elapsed.TotalSeconds:F0}s; {skippedForBudget} materials will be checked on the next build (results are cached).");
+            }
+        }
+
+        // Materials a script could change keywords on: referenced by a script directly, or used by a renderer a
+        // script references (renderer.material). UdonBehaviour public variables are serialized references too.
+        private static HashSet<Material> CollectScriptReachableMaterials(Scene scene)
+        {
+            var materials = new HashSet<Material>();
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if (behaviour == null) continue;
+                    SerializedProperty iterator = new SerializedObject(behaviour).GetIterator();
+                    while (iterator.Next(true))
+                    {
+                        if (iterator.propertyType != SerializedPropertyType.ObjectReference) continue;
+                        switch (iterator.objectReferenceValue)
+                        {
+                            case Material mat:
+                                materials.Add(mat);
+                                break;
+                            case Renderer renderer:
+                                foreach (Material m in renderer.sharedMaterials)
+                                {
+                                    if (m != null) materials.Add(m);
+                                }
+                                break;
+                        }
+                    }
+                }
+            }
+            return materials;
         }
 
         private bool HasPropertyOnShader(Shader shader, string propName)
