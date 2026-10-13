@@ -2,6 +2,14 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.9] - 2026-10-12
+
+### Added
+- **Unused Texture Shrinker** (new pass, Memory & Assets) - Imports textures that nothing in the world can ever draw at 32x32 for the build, then restores the import setting. Mochie Standard puts an 8192x8192 rain sheet (about 43 MB) on every material; clearing it from each material doesn't reach protected objects, video players or materials scripts depend on, so the texture still shipped. This works wherever the texture is referenced, without changing any material. A texture is shrunk only when everything the scene pulls into the build (including prefabs scripts can spawn, animations, UI, sprites and Udon variables) uses it through material slots alone, every one of those materials' shader variants skips the slot, and no script reads the slot out of a material. Not run in previews.
+
+### Changed
+- **Scripts are read precisely instead of guessed** - Udon programs are now traced to the exact shader keywords they can turn on or off, and the material texture slots they can read. A texture behind a disabled feature is only cleared or shrunk if none of those keywords would make the shader read it; each keyword is tested by compiling the variant with it. A keyword name built at runtime, a keyword list, or a program that can't be read makes the check assume a script could turn on anything (logged with the script's name). This replaces the beta.7/beta.8 rules about which materials a script can reach: Light Volumes' scripts, for example, only set their own `VRCLV_*` keywords, so they no longer protect every material they reference.
+
 ## [1.2.0-beta.8] - 2026-10-12
 
 ### Fixed

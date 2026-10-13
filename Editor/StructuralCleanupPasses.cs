@@ -277,7 +277,7 @@ namespace Synthos.SynSceneOptimizer
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
             bool unsampled = SynSceneOptimizerSettings.GetBool(UnsampledKey, true);
-            bool newUnsampled = EditorGUILayout.Toggle(new GUIContent("Clear Disabled Feature Textures", "Also clears textures the material's shader never samples because their feature is turned off (e.g. a rain or detail texture with rain/detail disabled). Each shader variant is compiled once to check, then cached. Materials an Udon program could turn the feature on for are left alone (only programs that change shader keywords count)."), unsampled);
+            bool newUnsampled = EditorGUILayout.Toggle(new GUIContent("Clear Disabled Feature Textures", "Also clears textures the material's shader never samples because their feature is turned off (e.g. a rain or detail texture with rain/detail disabled). Each shader variant is compiled once to check, then cached. Udon scripts are read to find every shader keyword they can turn on or off, and a texture is only cleared if none of those would make the shader read it."), unsampled);
             if (newUnsampled != unsampled)
             {
                 SynSceneOptimizerSettings.SetBool(UnsampledKey, newUnsampled);
@@ -288,8 +288,7 @@ namespace Synthos.SynSceneOptimizer
         {
             bool checkUnsampled = SynSceneOptimizerSettings.GetBool(UnsampledKey, true);
             BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
-            int keywordPrograms = 0;
-            HashSet<Material> scriptReachable = checkUnsampled ? CollectScriptReachableMaterials(scene, out keywordPrograms) : new HashSet<Material>();
+            SynUdonUsageScan scan = checkUnsampled ? SynUdonUsageScan.Run(scene) : null;
 
             HashSet<Material> processed = new HashSet<Material>();
             int purgedCount = 0;
@@ -317,8 +316,7 @@ namespace Synthos.SynSceneOptimizer
                     SerializedProperty texEnvs = serializedMat.FindProperty("m_SavedProperties.m_TexEnvs");
                     if (texEnvs != null && texEnvs.isArray)
                     {
-                        HashSet<string> sampled = null;
-                        bool sampledResolved = false;
+                        var keywords = new List<string>(matState.TrackedKeywords);
                         bool clearedAny = false;
                         for (int i = texEnvs.arraySize - 1; i >= 0; i--)
                         {
@@ -341,19 +339,18 @@ namespace Synthos.SynSceneOptimizer
                                     continue;
                                 }
 
-                                if (!checkUnsampled || scriptReachable.Contains(mat)) continue;
-                                if (!sampledResolved)
-                                {
-                                    sampledResolved = true;
-                                    bool allowCompile = compileTimer.Elapsed.TotalSeconds < CompileBudgetSeconds;
-                                    compileTimer.Start();
-                                    sampled = SynShaderTextureUsage.GetSampledTextures(matState.TargetShader, matState.TrackedKeywords, target, allowCompile);
-                                    compileTimer.Stop();
-                                    if (sampled == null && !allowCompile) skippedForBudget++;
-                                }
+                                if (!checkUnsampled || scan.KeywordsUnknown) continue;
+                                // A script that reads this slot out of a material could show the texture elsewhere
+                                if (scan.TextureReadsUnknown || scan.TextureReads.Contains(texPropName)) continue;
 
-                                // The shader declares the slot, but this variant never reads it
-                                if (sampled != null && !sampled.Contains(texPropName))
+                                bool allowCompile = compileTimer.Elapsed.TotalSeconds < CompileBudgetSeconds;
+                                compileTimer.Start();
+                                bool? canSample = SynShaderTextureUsage.CanSample(matState.TargetShader, keywords, texPropName, scan, target, allowCompile);
+                                compileTimer.Stop();
+                                if (canSample == null && !allowCompile) skippedForBudget++;
+
+                                // The shader declares the slot, but no variant this material can be in reads it
+                                if (canSample == false)
                                 {
                                     matState.UnsampledTextureProperties.Add(texPropName);
                                     matState.TrackedTextures[texPropName] = null;
@@ -400,124 +397,19 @@ namespace Synthos.SynSceneOptimizer
                 );
             }
 
-            if (keywordPrograms > 0)
+            if (scan != null && scan.KeywordsUnknown)
             {
-                Debug.Log($"[SYN SCENE OPTIMIZER] Ghost Texture Purger: {keywordPrograms} Udon behaviour(s) can change shader keywords; materials they can reach keep all their textures.");
+                Debug.Log($"[SYN SCENE OPTIMIZER] Ghost Texture Purger: textures behind disabled shader features were kept, because a script could turn on any feature: {string.Join("; ", scan.UnknownReasons)}.");
+            }
+            else if (scan != null && scan.Keywords.Count > 0)
+            {
+                Debug.Log($"[SYN SCENE OPTIMIZER] Ghost Texture Purger: Udon scripts can set these shader keywords, which were checked too: {string.Join(", ", scan.Keywords)}.");
             }
 
             if (skippedForBudget > 0)
             {
                 Debug.Log($"[SYN SCENE OPTIMIZER] Ghost Texture Purger: checked shaders for {compileTimer.Elapsed.TotalSeconds:F0}s; {skippedForBudget} materials will be checked on the next build (results are cached).");
             }
-        }
-
-        // Materials an Udon program could turn a shader feature on for at runtime. Only Udon runs in a VRChat world, and
-        // only programs that call a keyword API (EnableKeyword, SetKeyword, shaderKeywords, ...) count; other components
-        // that list renderers (e.g. Bakery's lightmap storage, which lists every lightmapped renderer) can't. Such a
-        // program reaches the materials it references, renderers it references, and renderers on GameObjects it
-        // references or sits on (GetComponent), including their children.
-        private static HashSet<Material> CollectScriptReachableMaterials(Scene scene, out int keywordPrograms)
-        {
-            var materials = new HashSet<Material>();
-            var programVerdicts = new Dictionary<Object, bool>();
-            keywordPrograms = 0;
-
-            void AddRenderers(Transform t)
-            {
-                foreach (Renderer renderer in t.GetComponentsInChildren<Renderer>(true))
-                {
-                    foreach (Material m in renderer.sharedMaterials)
-                    {
-                        if (m != null) materials.Add(m);
-                    }
-                }
-            }
-
-            foreach (GameObject root in scene.GetRootGameObjects())
-            {
-                foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
-                {
-                    if (behaviour == null) continue;
-                    VRC.Udon.UdonBehaviour udon = behaviour as VRC.Udon.UdonBehaviour;
-                    if (udon == null && behaviour is UdonSharp.UdonSharpBehaviour proxy)
-                    {
-                        udon = UdonSharpEditor.UdonSharpEditorUtility.GetBackingUdonBehaviour(proxy);
-                        if (udon == null)
-                        {
-                            // No compiled program to inspect, so assume it could
-                            keywordPrograms++;
-                            AddReferencedMaterials(behaviour, materials, AddRenderers);
-                            continue;
-                        }
-                    }
-                    if (udon == null || !CanChangeKeywords(udon, programVerdicts)) continue;
-
-                    keywordPrograms++;
-                    AddRenderers(behaviour.transform);
-                    AddReferencedMaterials(behaviour, materials, AddRenderers);
-                }
-            }
-            return materials;
-        }
-
-        private static void AddReferencedMaterials(MonoBehaviour behaviour, HashSet<Material> materials, System.Action<Transform> addRenderers)
-        {
-            SerializedProperty iterator = new SerializedObject(behaviour).GetIterator();
-            while (iterator.Next(true))
-            {
-                if (iterator.propertyType != SerializedPropertyType.ObjectReference) continue;
-                switch (iterator.objectReferenceValue)
-                {
-                    case Material mat:
-                        materials.Add(mat);
-                        break;
-                    case GameObject go:
-                        addRenderers(go.transform);
-                        break;
-                    case Component component:
-                        addRenderers(component.transform);
-                        break;
-                }
-            }
-        }
-
-        // True when the program calls any keyword API. Udon keeps each extern's signature as a string on its heap
-        // (e.g. "UnityEngineMaterial.__EnableKeyword__SystemString__SystemVoid"). Unknown programs count as true.
-        private static bool CanChangeKeywords(VRC.Udon.UdonBehaviour udon, Dictionary<Object, bool> verdicts)
-        {
-            VRC.Udon.AbstractUdonProgramSource source = udon.programSource;
-            if (source == null) return false; // No program, nothing runs
-            if (verdicts.TryGetValue(source, out bool known)) return known;
-
-            bool result = true;
-            try
-            {
-                // UdonSharp keeps its compiled program in memory and only writes the serialized copy when the SDK
-                // builds; graph programs write it whenever they are saved
-                VRC.Udon.Common.Interfaces.IUdonProgram program = (source as UdonSharp.UdonSharpProgramAsset)?.GetRealProgram();
-                if (program == null && source.SerializedProgramAsset != null) program = source.SerializedProgramAsset.RetrieveProgram();
-                if (program != null && program.Heap != null)
-                {
-                    var heapObjects = new List<(uint, System.Runtime.CompilerServices.IStrongBox, System.Type)>();
-                    program.Heap.DumpHeapObjects(heapObjects);
-                    result = false;
-                    foreach (var (_, box, _) in heapObjects)
-                    {
-                        if (box?.Value is string text && text.IndexOf("Keyword", System.StringComparison.Ordinal) >= 0)
-                        {
-                            result = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogWarning($"[SYN SCENE OPTIMIZER] Ghost Texture Purger: could not read the Udon program '{source.name}', treating it as able to change shader keywords: {e.Message}");
-            }
-
-            verdicts[source] = result;
-            return result;
         }
 
         private bool HasPropertyOnShader(Shader shader, string propName)

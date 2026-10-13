@@ -65,6 +65,54 @@ namespace Synthos.SynSceneOptimizer
         }
 
         /// <summary>
+        /// Whether the shader can sample <paramref name="propName"/> with these keywords, or after a script turns one of
+        /// the keywords in <paramref name="scan"/> on or off (each alone, and all at once). Null when it can't be
+        /// determined (the caller must then assume it can).
+        /// </summary>
+        public static bool? CanSample(Shader shader, ICollection<string> keywords, string propName, SynUdonUsageScan scan, BuildTarget target, bool allowCompile = true)
+        {
+            if (scan == null || scan.KeywordsUnknown) return true;
+
+            HashSet<string> sampled = GetSampledTextures(shader, keywords, target, allowCompile);
+            if (sampled == null) return null;
+            if (sampled.Contains(propName)) return true;
+
+            var toggles = new List<string>();
+            foreach (string keyword in scan.Keywords)
+            {
+                if (shader.keywordSpace.FindKeyword(keyword).isValid) toggles.Add(keyword);
+            }
+            if (toggles.Count == 0) return false;
+
+            var allOn = new List<string>(keywords);
+            foreach (string keyword in toggles)
+            {
+                var variant = new List<string>(keywords);
+                if (variant.Contains(keyword))
+                {
+                    variant.Remove(keyword);
+                }
+                else
+                {
+                    variant.Add(keyword);
+                    allOn.Add(keyword);
+                }
+
+                sampled = GetSampledTextures(shader, variant, target, allowCompile);
+                if (sampled == null) return null;
+                if (sampled.Contains(propName)) return true;
+            }
+
+            if (allOn.Count > keywords.Count + 1)
+            {
+                sampled = GetSampledTextures(shader, allOn, target, allowCompile);
+                if (sampled == null) return null;
+                if (sampled.Contains(propName)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Empties every texture slot the material's current variant never samples. For materials the optimizer
         /// generates itself (no script can reach them). Returns how many slots were cleared.
         /// </summary>

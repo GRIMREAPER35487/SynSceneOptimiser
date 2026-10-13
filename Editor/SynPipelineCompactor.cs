@@ -291,6 +291,12 @@ namespace Synthos.SynSceneOptimizer
             return mat != null && MaterialCache.TryGetValue(mat, out var state) && state.UnsampledTextureProperties.Contains(propName);
         }
 
+        /// <summary>The staged state of a material if a pass has staged one, without creating it.</summary>
+        public static SynVirtualMaterialState TryGetStagedState(Material mat)
+        {
+            return mat != null && MaterialCache.TryGetValue(mat, out var state) ? state : null;
+        }
+
         public static SynVirtualMaterialState GetStagingState(Material mat)
         {
             if (mat == null) return null;
