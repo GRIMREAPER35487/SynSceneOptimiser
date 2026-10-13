@@ -19,9 +19,16 @@ namespace Synthos.SynSceneOptimizer
         public override SynProtectionTargets ProtectionTargets => SynProtectionTargets.Objects | SynProtectionTargets.Materials | SynProtectionTargets.Textures;
         public override string ProtectionEffect => "Swaps the material for a copy using downscaled textures.";
 
+        private static void DrawToggle(string key, bool defaultValue, string label, string tooltip)
+        {
+            bool value = SynSceneOptimizerSettings.GetBool(key, defaultValue);
+            bool newValue = EditorGUILayout.Toggle(new GUIContent(label, tooltip), value);
+            if (newValue != value) SynSceneOptimizerSettings.SetBool(key, newValue);
+        }
+
         public override void DrawGUI(SynSceneOptimizerSettings settings)
         {
-            EditorGUILayout.HelpBox("Scores how much visible detail each scene texture has (edges, fine detail lost when shrinking, and how much of the texture is detailed) and downscales low-detail textures (e.g. flat walls 2048 -> 512/256), saving 75-93% VRAM per texture. Uses the GPU when available. Integrates with deterministic per-platform cache.", MessageType.Info);
+            EditorGUILayout.HelpBox("Makes the Avatar Compressor's decisions for scene textures: scores how much visible detail each texture has, sizes it by that score (and by how large it appears in the world), picks the compression format from its detail and alpha, and compresses from the original image file. Results are cached per platform.", MessageType.Info);
 
             bool protectBakery = SynSceneOptimizerSettings.GetBool("SmartVRAM_ProtectBakery", true);
             bool newProtectBakery = EditorGUILayout.Toggle(new GUIContent("Protect Bakery & Lightmaps", "Guarantees that all Bakery lightmaps, directional maps, volumes, and shadowmasks are never downscaled."), protectBakery);
@@ -32,36 +39,68 @@ namespace Synthos.SynSceneOptimizer
             if (newProtectMochie != protectMochie) SynSceneOptimizerSettings.SetBool("SmartVRAM_ProtectMochie", newProtectMochie);
 
             EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("COMPLEXITY THRESHOLDS", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("PRESET", EditorStyles.boldLabel);
+            string preset = SynTextureCompressorSettings.GetPreset();
+            int presetIndex = Mathf.Max(0, System.Array.IndexOf(SynTextureCompressorSettings.PresetNames, preset));
+            int newPresetIndex = EditorGUILayout.Popup(new GUIContent("Preset", "The Avatar Compressor's presets: the same name makes the same decisions in both tools. Custom uses the values below."), presetIndex, SynTextureCompressorSettings.PresetLabels);
+            if (newPresetIndex != presetIndex) SynSceneOptimizerSettings.SetString(SynTextureCompressorSettings.PresetKey, SynTextureCompressorSettings.PresetNames[newPresetIndex]);
 
-            float highThresh = SynSceneOptimizerSettings.GetFloat("SmartVRAM_HighComplexityThreshold", 0.70f);
-            float newHighThresh = EditorGUILayout.Slider(new GUIContent("High Detail Threshold", "Textures above this complexity score retain full resolution and receive BC7 / ASTC 4x4."), highThresh, 0.40f, 0.95f);
-            if (Mathf.Abs(newHighThresh - highThresh) > 0.001f) SynSceneOptimizerSettings.SetFloat("SmartVRAM_HighComplexityThreshold", newHighThresh);
+            bool mobileTarget = SynAssetCache.GetCurrentTargetPlatform() != SynTargetPlatform.PC;
+            var resolved = SynTextureCompressorSettings.Load(mobileTarget);
+            if (resolved.Preset != "Custom")
+            {
+                EditorGUILayout.HelpBox($"{SynTextureCompressorSettings.PresetLabels[newPresetIndex]}: {resolved.MinResolution}-{resolved.MaxResolution} px, divisor {resolved.MinDivisor}x-{resolved.MaxDivisor}x, full size above {resolved.HighComplexityThreshold:P0} detail, smallest below {resolved.LowComplexityThreshold:P0}. Textures of {resolved.SkipIfSmallerThan} px or less are left alone.", MessageType.None);
+            }
+            else
+            {
+                float highThresh = SynSceneOptimizerSettings.GetFloat("SmartVRAM_HighComplexityThreshold", 0.70f);
+                float newHighThresh = EditorGUILayout.Slider(new GUIContent("High Detail Threshold", "Textures above this detail score keep full resolution and get the high-quality format."), highThresh, 0.10f, 0.95f);
+                if (Mathf.Abs(newHighThresh - highThresh) > 0.001f) SynSceneOptimizerSettings.SetFloat("SmartVRAM_HighComplexityThreshold", newHighThresh);
 
-            float lowThresh = SynSceneOptimizerSettings.GetFloat("SmartVRAM_LowComplexityThreshold", 0.20f);
-            float newLowThresh = EditorGUILayout.Slider(new GUIContent("Low Detail Threshold", "Textures below this complexity score are aggressive candidates for 4x/8x downscaling (e.g. 2048 -> 512/256)."), lowThresh, 0.05f, 0.45f);
-            if (Mathf.Abs(newLowThresh - lowThresh) > 0.001f) SynSceneOptimizerSettings.SetFloat("SmartVRAM_LowComplexityThreshold", newLowThresh);
+                float lowThresh = SynSceneOptimizerSettings.GetFloat("SmartVRAM_LowComplexityThreshold", 0.20f);
+                float newLowThresh = EditorGUILayout.Slider(new GUIContent("Low Detail Threshold", "Textures below this detail score get the largest divisor."), lowThresh, 0.05f, 0.45f);
+                if (Mathf.Abs(newLowThresh - lowThresh) > 0.001f) SynSceneOptimizerSettings.SetFloat("SmartVRAM_LowComplexityThreshold", newLowThresh);
+
+                string[] divisorLabels = { "1x", "2x", "4x", "8x", "16x" };
+                int[] divisors = { 1, 2, 4, 8, 16 };
+                int minDiv = SynSceneOptimizerSettings.GetInt("SmartVRAM_MinDivisor", 1);
+                int newMinDiv = EditorGUILayout.IntPopup("Min Divisor", minDiv, divisorLabels, divisors);
+                if (newMinDiv != minDiv) SynSceneOptimizerSettings.SetInt("SmartVRAM_MinDivisor", newMinDiv);
+                int maxDiv = SynSceneOptimizerSettings.GetInt("SmartVRAM_MaxDivisor", 8);
+                int newMaxDiv = EditorGUILayout.IntPopup("Max Divisor", maxDiv, divisorLabels, divisors);
+                if (newMaxDiv != maxDiv) SynSceneOptimizerSettings.SetInt("SmartVRAM_MaxDivisor", newMaxDiv);
+
+                int pcMax = SynSceneOptimizerSettings.GetInt("SmartVRAM_MaxResPC", 2048);
+                int newPCMax = EditorGUILayout.IntPopup("Max PC Resolution", pcMax, new string[] { "512", "1024", "2048", "4096" }, new int[] { 512, 1024, 2048, 4096 });
+                if (newPCMax != pcMax) SynSceneOptimizerSettings.SetInt("SmartVRAM_MaxResPC", newPCMax);
+                int pcMin = SynSceneOptimizerSettings.GetInt("SmartVRAM_MinResPC", 512);
+                int newPCMin = EditorGUILayout.IntPopup("Min PC Resolution", pcMin, new string[] { "32", "64", "128", "256", "512", "1024" }, new int[] { 32, 64, 128, 256, 512, 1024 });
+                if (newPCMin != pcMin) SynSceneOptimizerSettings.SetInt("SmartVRAM_MinResPC", newPCMin);
+                int androidMax = SynSceneOptimizerSettings.GetInt("SmartVRAM_MaxResAndroid", 1024);
+                int newAndroidMax = EditorGUILayout.IntPopup("Max Quest Resolution", androidMax, new string[] { "512", "1024", "2048" }, new int[] { 512, 1024, 2048 });
+                if (newAndroidMax != androidMax) SynSceneOptimizerSettings.SetInt("SmartVRAM_MaxResAndroid", newAndroidMax);
+                int androidMin = SynSceneOptimizerSettings.GetInt("SmartVRAM_MinResAndroid", 256);
+                int newAndroidMin = EditorGUILayout.IntPopup("Min Quest Resolution", androidMin, new string[] { "32", "64", "128", "256", "512" }, new int[] { 32, 64, 128, 256, 512 });
+                if (newAndroidMin != androidMin) SynSceneOptimizerSettings.SetInt("SmartVRAM_MinResAndroid", newAndroidMin);
+            }
 
             EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("RESOLUTION BOUNDS (MIN / MAX)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("SIZE IN THE WORLD", EditorStyles.boldLabel);
+            DrawToggle("SmartVRAM_LimitByWorldSize", true, "Limit By Size In World", "Measures how large each texture appears on the meshes that use it. A texture sharper than anyone can see from the viewing distance (a 2048 texture on a mug) is made smaller.");
+            DrawToggle("SmartVRAM_KeepVisibleDetail", true, "Keep Visible Detail", "Doesn't shrink a detailed texture below what is visible from the viewing distance, even when its detail score allows it (e.g. a large wall).");
+            float pcDistance = SynSceneOptimizerSettings.GetFloat("SmartVRAM_ViewDistancePC", SynTextureCompressorSettings.DefaultViewDistancePC);
+            float newPcDistance = EditorGUILayout.Slider(new GUIContent("Viewing Distance PC (cm)", "How close players get to surfaces. Closer needs sharper textures."), pcDistance, 20f, 500f);
+            if (Mathf.Abs(newPcDistance - pcDistance) > 0.5f) SynSceneOptimizerSettings.SetFloat("SmartVRAM_ViewDistancePC", Mathf.Round(newPcDistance));
+            float questDistance = SynSceneOptimizerSettings.GetFloat("SmartVRAM_ViewDistanceAndroid", SynTextureCompressorSettings.DefaultViewDistanceAndroid);
+            float newQuestDistance = EditorGUILayout.Slider(new GUIContent("Viewing Distance Quest (cm)", "How close players get to surfaces on Quest builds."), questDistance, 20f, 500f);
+            if (Mathf.Abs(newQuestDistance - questDistance) > 0.5f) SynSceneOptimizerSettings.SetFloat("SmartVRAM_ViewDistanceAndroid", Mathf.Round(newQuestDistance));
 
-            int pcMax = SynSceneOptimizerSettings.GetInt("SmartVRAM_MaxResPC", 2048);
-            int newPCMax = EditorGUILayout.IntPopup("Max PC Resolution", pcMax, new string[] { "512", "1024", "2048", "4096" }, new int[] { 512, 1024, 2048, 4096 });
-            if (newPCMax != pcMax) SynSceneOptimizerSettings.SetInt("SmartVRAM_MaxResPC", newPCMax);
-
-            int pcMin = SynSceneOptimizerSettings.GetInt("SmartVRAM_MinResPC", 512);
-            int newPCMin = EditorGUILayout.IntPopup("Min PC Resolution (Floor)", pcMin, new string[] { "64", "128", "256", "512", "1024" }, new int[] { 64, 128, 256, 512, 1024 });
-            if (newPCMin != pcMin) SynSceneOptimizerSettings.SetInt("SmartVRAM_MinResPC", newPCMin);
-
-            EditorGUILayout.Space(2);
-
-            int androidMax = SynSceneOptimizerSettings.GetInt("SmartVRAM_MaxResAndroid", 1024);
-            int newAndroidMax = EditorGUILayout.IntPopup("Max Android Resolution", androidMax, new string[] { "512", "1024", "2048" }, new int[] { 512, 1024, 2048 });
-            if (newAndroidMax != androidMax) SynSceneOptimizerSettings.SetInt("SmartVRAM_MaxResAndroid", newAndroidMax);
-
-            int androidMin = SynSceneOptimizerSettings.GetInt("SmartVRAM_MinResAndroid", 256);
-            int newAndroidMin = EditorGUILayout.IntPopup("Min Android Resolution (Floor)", androidMin, new string[] { "64", "128", "256", "512" }, new int[] { 64, 128, 256, 512 });
-            if (newAndroidMin != androidMin) SynSceneOptimizerSettings.SetInt("SmartVRAM_MinResAndroid", newAndroidMin);
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("ADVANCED", EditorStyles.boldLabel);
+            DrawToggle("SmartVRAM_RespectImportMaxSize", true, "Respect Import Max Size", "Scale from the size the texture is imported at. When off, scale from the full source file (fit to the max resolution); the result only grows past the import size when the extra detail is visible.");
+            DrawToggle("SmartVRAM_RespectImportFormat", true, "Respect Import Format", "Keep the compressed format the texture is imported with. When off, the format is chosen from its detail and alpha (DXT1/BC7/BC5, ASTC on Quest).");
+            DrawToggle("SmartVRAM_AvoidCompressionArtifacts", true, "Avoid Compression Artifacts", "Test-compresses smooth areas and steps up to a format that doesn't band or show blocks.");
+            DrawToggle("SmartVRAM_SkipUnknownUncompressed", true, "Skip Unknown Uncompressed Textures", "Leaves uncompressed textures in unrecognized shader slots alone: they may hold data (lookup tables, masks) that compression would damage.");
 
             EditorGUILayout.Space(6);
             EditorGUILayout.LabelField("PROTECTED TEXTURES & EXCLUSIONS", EditorStyles.boldLabel);
@@ -155,44 +194,33 @@ namespace Synthos.SynSceneOptimizer
             public Texture2D SourceTexture;
             public string AssetPath;
             public bool IsNormalMap;
+            public bool IsEmission;
             public bool AlphaIsTransparency;
+            public bool KnownSlot;
+            public bool FormatOnly;
             public float ComplexityScore;
-            public int RecommendedDivisor;
+            public readonly List<(Material Material, string Property)> Uses = new List<(Material, string)>();
             public Texture2D OptimizedTexture;
+            public string Note;
         }
 
-        private class PendingImporterCopy
-        {
-            public TextureCandidate Candidate;
-            public string CopyPath;
-            public int MaxSize;
-        }
-
-        // Bumped from "SmartVRAM" so legacy uncompressed RGBA32 cache entries are never reused
-        private const string TextureHashTag = "SmartVRAM_v2";
+        // v3: the Avatar Compressor's decisions (source files, presets, format choice, size in the world)
+        private const string TextureHashTag = "SmartVRAM_v3";
 
         public override void Execute(Scene scene, List<Renderer> renderers)
         {
             bool protectBakery = SynSceneOptimizerSettings.GetBool("SmartVRAM_ProtectBakery", true);
             bool protectMochie = SynSceneOptimizerSettings.GetBool("SmartVRAM_ProtectMochie", true);
-            bool pruneUnused = SynSceneOptimizerSettings.GetBool("SmartVRAM_PruneUnusedSlots", true);
-            float highThresh = SynSceneOptimizerSettings.GetFloat("SmartVRAM_HighComplexityThreshold", 0.70f);
-            float lowThresh = SynSceneOptimizerSettings.GetFloat("SmartVRAM_LowComplexityThreshold", 0.20f);
+            bool verbose = SynSceneOptimizerSettings.GetBool("EnableVerboseLogging", false);
 
             SynTargetPlatform currentPlatform = SynAssetCache.GetCurrentTargetPlatform();
-            int maxAllowedRes = (currentPlatform == SynTargetPlatform.Android || currentPlatform == SynTargetPlatform.iOS)
-                ? SynSceneOptimizerSettings.GetInt("SmartVRAM_MaxResAndroid", 1024)
-                : SynSceneOptimizerSettings.GetInt("SmartVRAM_MaxResPC", 2048);
-
-            int minAllowedRes = (currentPlatform == SynTargetPlatform.Android || currentPlatform == SynTargetPlatform.iOS)
-                ? SynSceneOptimizerSettings.GetInt("SmartVRAM_MinResAndroid", 256)
-                : SynSceneOptimizerSettings.GetInt("SmartVRAM_MinResPC", 512);
-
             bool isMobile = currentPlatform == SynTargetPlatform.Android || currentPlatform == SynTargetPlatform.iOS;
-            var complexityCalc = new ComplexityCalculator(highThresh, lowThresh, 1, 8);
-            var formatSelector = new TextureFormatSelector(
-                isMobile ? CompressionPlatform.Mobile : CompressionPlatform.Desktop, true, highThresh);
-            var processor = new TextureProcessor(32, 8192, false, ResizeBackendPreference.Auto);
+            var settings = SynTextureCompressorSettings.Load(isMobile);
+
+            var processor = new TextureProcessor(settings.MinResolution, settings.MaxResolution, true, ResizeBackendPreference.Auto);
+            var complexityCalc = new ComplexityCalculator(settings.HighComplexityThreshold, settings.LowComplexityThreshold, settings.MinDivisor, settings.MaxDivisor);
+            var formatSelector = new TextureFormatSelector(CompressionPlatform.Auto, settings.UseHighQualityFormatForHighComplexity, settings.HighComplexityThreshold, settings.RespectImportFormat);
+            var formatOnlySelector = new TextureFormatSelector(CompressionPlatform.Auto, settings.UseHighQualityFormatForHighComplexity, settings.HighComplexityThreshold, false);
 
             // Step 1: Collect all distinct scene materials
             var sceneMaterials = new HashSet<Material>();
@@ -210,7 +238,7 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            // Step 2: Collect candidate textures
+            // Step 2: Collect candidate textures with every slot that uses them
             string patterns = SynSceneOptimizerSettings.GetString("SmartVRAM_ProtectedPatterns", "");
             string[] patternTokens = string.IsNullOrEmpty(patterns)
                 ? new string[0]
@@ -218,6 +246,7 @@ namespace Synthos.SynSceneOptimizer
 
             var candidateMap = new Dictionary<Texture2D, TextureCandidate>();
             var candidateList = new List<TextureCandidate>();
+            var rejected = new HashSet<Texture2D>();
 
             foreach (var mat in sceneMaterials)
             {
@@ -229,103 +258,110 @@ namespace Synthos.SynSceneOptimizer
                     if (ShaderUtil.GetPropertyType(mat.shader, i) != ShaderUtil.ShaderPropertyType.TexEnv) continue;
 
                     string propName = ShaderUtil.GetPropertyName(mat.shader, i);
-                    Texture tex = mat.GetTexture(propName);
+                    if (!(mat.GetTexture(propName) is Texture2D tex2D) || rejected.Contains(tex2D)) continue;
+
+                    var kind = SynTextureSlotKinds.GetKind(propName, tex2D);
                     bool usedAsTransparency = AlphaCoverage.IsCoverage(mat, propName);
 
-                    if (tex is Texture2D existingTex && candidateMap.TryGetValue(existingTex, out var existingCandidate))
+                    if (candidateMap.TryGetValue(tex2D, out var existing))
                     {
-                        existingCandidate.AlphaIsTransparency |= usedAsTransparency;
+                        // A texture used as a normal map anywhere is handled as one (as the Avatar Compressor does)
+                        existing.AlphaIsTransparency |= usedAsTransparency;
+                        existing.IsNormalMap |= kind == SynTextureSlotKinds.Kind.Normal;
+                        existing.IsEmission |= kind == SynTextureSlotKinds.Kind.Emission;
+                        existing.KnownSlot |= SynTextureSlotKinds.IsKnownSlot(propName, tex2D);
+                        existing.Uses.Add((mat, propName));
                         continue;
                     }
 
-                    if (tex is Texture2D tex2D)
+                    string path = AssetDatabase.GetAssetPath(tex2D);
+                    bool skip = string.IsNullOrEmpty(path)
+                        || (protectBakery && SynProtectionData.IsBakeryAsset(path, tex2D))
+                        || (protectMochie && SynProtectionData.IsMochieAsset(path, tex2D))
+                        || SynProtectionData.IsProtected(tex2D);
+                    if (!skip && patternTokens.Length > 0)
                     {
-                        string path = AssetDatabase.GetAssetPath(tex2D);
-                        if (string.IsNullOrEmpty(path)) continue;
-
-                        if (protectBakery && SynProtectionData.IsBakeryAsset(path, tex2D))
-                            continue;
-
-                        if (protectMochie && SynProtectionData.IsMochieAsset(path, tex2D))
-                            continue;
-
-                        if (SynProtectionData.IsProtected(tex2D))
-                            continue;
-
-                        if (patternTokens.Length > 0)
+                        string lowerName = tex2D.name.ToLowerInvariant();
+                        foreach (var pat in patternTokens)
                         {
-                            string lowerName = tex2D.name.ToLowerInvariant();
-                            bool matchesPattern = false;
-                            foreach (var pat in patternTokens)
+                            if (lowerName.Contains(pat.Trim().ToLowerInvariant()))
                             {
-                                if (lowerName.Contains(pat.Trim().ToLowerInvariant()))
-                                {
-                                    matchesPattern = true;
-                                    break;
-                                }
+                                skip = true;
+                                break;
                             }
-                            if (matchesPattern) continue;
                         }
-
-                        // Skip small textures (< 128)
-                        if (tex2D.width < 128 && tex2D.height < 128)
-                            continue;
-
-                        bool isNormal = (AssetImporter.GetAtPath(path) is TextureImporter ti && ti.textureType == TextureImporterType.NormalMap)
-                            || propName.ToLower().Contains("bump") || propName.ToLower().Contains("normal");
-
-                        var candidate = new TextureCandidate
-                        {
-                            SourceTexture = tex2D,
-                            AssetPath = path,
-                            IsNormalMap = isNormal,
-                            AlphaIsTransparency = usedAsTransparency
-                        };
-
-                        candidateMap[tex2D] = candidate;
-                        candidateList.Add(candidate);
                     }
+
+                    // The Avatar Compressor's size filters (Min Source Size / Skip If Smaller Than), on the size it
+                    // scales from
+                    if (!skip)
+                    {
+                        Vector2Int filterSize = settings.RespectImportMaxSize
+                            ? new Vector2Int(tex2D.width, tex2D.height)
+                            : TextureSourceCache.GetPlannedBaseSize(tex2D, false, true, settings.MaxResolution);
+                        int maxDim = Mathf.Max(filterSize.x, filterSize.y);
+                        skip = maxDim < settings.MinSourceSize || maxDim <= settings.SkipIfSmallerThan;
+                    }
+
+                    if (skip)
+                    {
+                        rejected.Add(tex2D);
+                        continue;
+                    }
+
+                    var candidate = new TextureCandidate
+                    {
+                        SourceTexture = tex2D,
+                        AssetPath = path,
+                        IsNormalMap = kind == SynTextureSlotKinds.Kind.Normal,
+                        IsEmission = kind == SynTextureSlotKinds.Kind.Emission,
+                        AlphaIsTransparency = usedAsTransparency,
+                        KnownSlot = SynTextureSlotKinds.IsKnownSlot(propName, tex2D)
+                    };
+                    candidate.Uses.Add((mat, propName));
+                    candidateMap[tex2D] = candidate;
+                    candidateList.Add(candidate);
                 }
             }
 
-            // Step 3: A downscaled copy only replaces the original on redirected renderers. If anything else in the
-            // scene (protected/video renderers, particles, UI, sprites, Udon, skybox, animated material swaps)
-            // still uses the original, both versions would ship, so such textures are left alone.
+            // Uncompressed textures only in unrecognized slots may hold data (lookup tables, masks)
+            if (settings.SkipUnknownUncompressedTextures)
+            {
+                candidateList.RemoveAll(c =>
+                {
+                    bool unknownData = !c.KnownSlot && !TextureFormatInfo.IsCompressed(c.SourceTexture.format);
+                    if (unknownData) candidateMap.Remove(c.SourceTexture);
+                    return unknownData;
+                });
+            }
+
+            // Step 3: A replacement only applies to redirected renderers. If anything else in the scene (protected/video
+            // renderers, particles, UI, sprites, Udon, skybox, animated material swaps) still uses the original, both
+            // versions would ship, so such textures are left alone.
             var pinnedTextures = CollectTexturesUsedOutsideRedirectedRenderers(scene, renderers);
             int pinnedCount = candidateList.RemoveAll(c => pinnedTextures.Contains(c.SourceTexture));
             foreach (var tex in pinnedTextures) candidateMap.Remove(tex);
-            if (pinnedCount > 0 && SynSceneOptimizerSettings.GetBool("EnableVerboseLogging", false))
+            if (pinnedCount > 0 && verbose)
             {
-                Debug.Log($"[SYN SCENE OPTIMIZER] Texture Complexity Compressor: skipped {pinnedCount} textures that are also used outside optimized renderers (downscaling them would ship both versions).");
+                Debug.Log($"[SYN SCENE OPTIMIZER] Texture Complexity Compressor: skipped {pinnedCount} textures that are also used outside optimized renderers (changing them would ship both versions).");
             }
 
             if (candidateList.Count == 0) return;
 
-            // Step 4: Complexity scores. Cached per texture content in Library/ so unchanged textures are never
-            // analyzed again; the rest are scored in small batches (on the GPU when available).
+            // Step 4: Complexity scores. Cached per texture content and analysis weights in Library/; the rest are
+            // scored in small batches (on the GPU when available).
             var scoreCache = LoadScoreCache();
+            string weights = $"{settings.FastWeight:F2}_{settings.HighAccuracyWeight:F2}_{settings.PerceptualWeight:F2}";
             var toAnalyze = new List<TextureCandidate>();
             foreach (var candidate in candidateList)
             {
-                if (scoreCache.TryGetValue(GetScoreKey(candidate), out float cachedScore))
-                {
-                    candidate.ComplexityScore = cachedScore;
-                    candidate.RecommendedDivisor = complexityCalc.CalculateRecommendedDivisor(cachedScore);
-                }
-                else
-                {
-                    toAnalyze.Add(candidate);
-                }
+                if (scoreCache.TryGetValue(GetScoreKey(candidate, weights), out float cachedScore)) candidate.ComplexityScore = cachedScore;
+                else toAnalyze.Add(candidate);
             }
 
             if (toAnalyze.Count > 0)
             {
-                var analyzer = new TextureAnalyzer(
-                    AnalysisStrategyType.Combined,
-                    AnalysisConstants.CombinedDefaultFastWeight,
-                    AnalysisConstants.CombinedDefaultHighAccuracyWeight,
-                    AnalysisConstants.CombinedDefaultPerceptualWeight,
-                    processor);
+                var analyzer = new TextureAnalyzer(AnalysisStrategyType.Combined, settings.FastWeight, settings.HighAccuracyWeight, settings.PerceptualWeight, processor);
 
                 const int batchSize = 16;
                 for (int start = 0; start < toAnalyze.Count; start += batchSize)
@@ -343,92 +379,51 @@ namespace Synthos.SynSceneOptimizer
                         if (scores.TryGetValue(candidate.SourceTexture, out float score))
                         {
                             candidate.ComplexityScore = Mathf.Clamp01(score);
-                            candidate.RecommendedDivisor = complexityCalc.CalculateRecommendedDivisor(candidate.ComplexityScore);
-                            scoreCache[GetScoreKey(candidate)] = candidate.ComplexityScore;
+                            scoreCache[GetScoreKey(candidate, weights)] = candidate.ComplexityScore;
                         }
                         else
                         {
                             candidate.ComplexityScore = AnalysisConstants.DefaultComplexityScore;
-                            candidate.RecommendedDivisor = 1;
                         }
                     }
                 }
+                SaveScoreCache(scoreCache);
             }
-            if (toAnalyze.Count > 0) SaveScoreCache(scoreCache);
 
-            // Step 5: Process and Cache Optimized Textures
+            // Step 5: Size and format for each texture, made from the original image file
+            var sourceCache = new TextureSourceCache(SynAssetCache.BaseCachePath + "_SourceImport");
+            using (SynAssetDatabaseScope.Suspend())
+            {
+                // Imports the source files, which can't happen inside the pipeline's StartAssetEditing batch
+                var sources = new List<Texture2D>();
+                foreach (var c in candidateList) sources.Add(c.SourceTexture);
+                sourceCache.Prepare(sources);
+            }
+
+            Dictionary<Texture2D, SynTexelDensityInfo> densities = null;
+            if (settings.LimitByWorldSize)
+            {
+                var uses = new Dictionary<Texture2D, List<(Material, string)>>();
+                foreach (var c in candidateList) uses[c.SourceTexture] = c.Uses;
+                densities = SynWorldTexelDensity.Analyze(renderers, uses, settings.ViewDistanceCm);
+            }
+
             int downscaledCount = 0;
             long estimatedBytesSaved = 0;
-            var pendingCopies = new List<PendingImporterCopy>();
-
+            var normalPreprocessor = new NormalMapPreprocessor();
             foreach (var candidate in candidateList)
             {
-                Texture2D src = candidate.SourceTexture;
-                int targetWidth = src.width / candidate.RecommendedDivisor;
-                int targetHeight = src.height / candidate.RecommendedDivisor;
-
-                // Enforce Min Resolution Floor (never downscale below floor unless original texture was already smaller)
-                int minW = Mathf.Min(src.width, minAllowedRes);
-                int minH = Mathf.Min(src.height, minAllowedRes);
-                targetWidth = Mathf.Max(minW, targetWidth);
-                targetHeight = Mathf.Max(minH, targetHeight);
-
-                // Apply max resolution ceiling
-                if (targetWidth > maxAllowedRes)
+                try
                 {
-                    targetHeight = Mathf.Max(minH, (targetHeight * maxAllowedRes) / targetWidth);
-                    targetWidth = maxAllowedRes;
+                    candidate.OptimizedTexture = Optimize(candidate, settings, processor, complexityCalc, formatSelector, formatOnlySelector, sourceCache, densities, normalPreprocessor, currentPlatform) ?? candidate.SourceTexture;
                 }
-                if (targetHeight > maxAllowedRes)
+                catch (Exception e)
                 {
-                    targetWidth = Mathf.Max(minW, (targetWidth * maxAllowedRes) / targetHeight);
-                    targetHeight = maxAllowedRes;
+                    Debug.LogWarning($"[SYN SCENE OPTIMIZER] Texture Complexity Compressor: could not optimize '{candidate.SourceTexture.name}', keeping it: {e.Message}");
+                    candidate.OptimizedTexture = candidate.SourceTexture;
                 }
 
-                // If dimensions haven't changed, no downscaling needed
-                if (targetWidth == src.width && targetHeight == src.height)
-                {
-                    candidate.OptimizedTexture = src;
-                    continue;
-                }
-
-                // Importer-backed textures are duplicated into the cache and re-imported by Unity at a lower
-                // max size, so compression, color space, normal encoding, mips and sampler state all follow
-                // the original's import settings. The source asset is never modified.
-                if (AssetImporter.GetAtPath(candidate.AssetPath) is TextureImporter)
-                {
-                    int maxSize = FloorPowerOfTwo(Mathf.Max(targetWidth, targetHeight));
-                    if (maxSize >= Mathf.Max(src.width, src.height))
-                    {
-                        candidate.OptimizedTexture = src;
-                        continue;
-                    }
-
-                    string hash = SynAssetCache.ComputeTextureHash(src, TextureHashTag, maxSize, maxSize, "ImporterCopy");
-                    if (SynAssetCache.TryGetCachedAsset<Texture2D>(SynAssetCache.TexturesCategory, hash, out Texture2D cachedCopy))
-                    {
-                        candidate.OptimizedTexture = cachedCopy;
-                        continue;
-                    }
-
-                    string copyPath = SynAssetCache.GetAssetPath(
-                        SynAssetCache.TexturesCategory, hash, $"{src.name}_opt_{maxSize}", Path.GetExtension(candidate.AssetPath));
-                    pendingCopies.Add(new PendingImporterCopy { Candidate = candidate, CopyPath = copyPath, MaxSize = maxSize });
-                }
-                else
-                {
-                    candidate.OptimizedTexture = CreateCompressedCopy(candidate, targetWidth, targetHeight, formatSelector, processor, currentPlatform) ?? src;
-                }
-            }
-
-            if (pendingCopies.Count > 0)
-            {
-                ImportDownscaledCopies(pendingCopies);
-            }
-
-            foreach (var candidate in candidateList)
-            {
-                if (candidate.OptimizedTexture != null && candidate.OptimizedTexture != candidate.SourceTexture)
+                if (candidate.OptimizedTexture != candidate.SourceTexture)
                 {
                     downscaledCount++;
                     estimatedBytesSaved += EstimateGpuBytes(candidate.SourceTexture) - EstimateGpuBytes(candidate.OptimizedTexture);
@@ -488,143 +483,178 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            bool verbose = SynSceneOptimizerSettings.GetBool("EnableVerboseLogging", false);
-
             if (downscaledCount > 0)
             {
                 double savedMB = estimatedBytesSaved / (1024.0 * 1024.0);
-                string msg = $"Texture Complexity Compressor: Downscaled {downscaledCount} / {candidateList.Count} textures across {materialsReLinked} materials (Saved Est. ~{savedMB:F1} MB VRAM).";
+                string msg = $"Texture Complexity Compressor ({SynTextureCompressorSettings.PresetLabels[Math.Max(0, Array.IndexOf(SynTextureCompressorSettings.PresetNames, settings.Preset))]}): Optimized {downscaledCount} / {candidateList.Count} textures across {materialsReLinked} materials (Saved Est. ~{savedMB:F1} MB VRAM).";
                 Debug.Log($"[SYN SCENE OPTIMIZER] {msg}");
                 SynPipelineCompactor.LogChange(Name, msg);
-
-                if (verbose)
-                {
-                    var sb = new System.Text.StringBuilder();
-                    sb.AppendLine("[SYN SCENE OPTIMIZER] Detailed Texture Complexity Breakdown:");
-                    int logged = 0;
-                    foreach (var c in candidateList)
-                    {
-                        if (c.OptimizedTexture != null && c.OptimizedTexture != c.SourceTexture)
-                        {
-                            sb.AppendLine($" • '{c.SourceTexture.name}' (Score: {c.ComplexityScore:F2}) -> Downscaled from {c.SourceTexture.width}x{c.SourceTexture.height} to {c.OptimizedTexture.width}x{c.OptimizedTexture.height}");
-                            logged++;
-                            if (logged >= 30) break;
-                        }
-                    }
-                    Debug.Log(sb.ToString());
-                }
             }
             else
             {
                 Debug.Log($"[SYN SCENE OPTIMIZER] Texture Complexity Compressor: Analyzed {candidateList.Count} textures. All textures are optimal or already at appropriate resolution.");
             }
-        }
 
-        /// <summary>
-        /// Copies each source texture (with its import settings) into the cache, lowers the copy's max size
-        /// and lets Unity re-import it. Runs outside the pipeline's StartAssetEditing batch so the copies
-        /// are imported and loadable before materials are re-linked.
-        /// </summary>
-        private static void ImportDownscaledCopies(List<PendingImporterCopy> pendingCopies)
-        {
-            using (SynAssetDatabaseScope.Suspend())
+            if (verbose)
             {
-                string folder = SynAssetCache.GetCategoryPath(SynAssetCache.TexturesCategory).TrimEnd('/');
-                if (!AssetDatabase.IsValidFolder(folder))
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("[SYN SCENE OPTIMIZER] Detailed Texture Complexity Breakdown:");
+                foreach (var c in candidateList)
                 {
-                    // Cache folders are created on disk directly; make sure the AssetDatabase knows about them
-                    AssetDatabase.Refresh();
+                    Texture2D o = c.OptimizedTexture;
+                    string result = o != null && o != c.SourceTexture
+                        ? $"{c.SourceTexture.width}x{c.SourceTexture.height} {c.SourceTexture.format} -> {o.width}x{o.height} {o.format}"
+                        : $"kept at {c.SourceTexture.width}x{c.SourceTexture.height} {c.SourceTexture.format}";
+                    sb.AppendLine($" • '{c.SourceTexture.name}' (detail {c.ComplexityScore:P0}{(c.IsNormalMap ? ", normal map" : "")}{(c.IsEmission ? ", emission" : "")}): {result} | {c.Note}");
                 }
-
-                // Copied one at a time outside a StartAssetEditing batch, which would leave the copies unimported
-                var copied = new List<PendingImporterCopy>();
-                foreach (var p in pendingCopies)
-                {
-                    if (SynAssetCache.CopyAssetImported(p.Candidate.AssetPath, p.CopyPath))
-                    {
-                        copied.Add(p);
-                    }
-                    else
-                    {
-                        Debug.LogWarning($"[SYN SCENE OPTIMIZER] Texture Complexity Compressor: Failed to copy '{p.Candidate.AssetPath}' into the cache. Keeping original.");
-                    }
-                }
-
-                string importerPlatform = GetImporterPlatformName(SynAssetCache.GetCurrentTargetPlatform());
-                AssetDatabase.StartAssetEditing();
-                try
-                {
-                    foreach (var p in copied)
-                    {
-                        if (!(AssetImporter.GetAtPath(p.CopyPath) is TextureImporter importer)) continue;
-
-                        importer.maxTextureSize = Mathf.Min(importer.maxTextureSize, p.MaxSize);
-                        TextureImporterPlatformSettings platformSettings = importer.GetPlatformTextureSettings(importerPlatform);
-                        if (platformSettings.overridden)
-                        {
-                            platformSettings.maxTextureSize = Mathf.Min(platformSettings.maxTextureSize, p.MaxSize);
-                            importer.SetPlatformTextureSettings(platformSettings);
-                        }
-                        importer.SaveAndReimport();
-                    }
-                }
-                finally
-                {
-                    AssetDatabase.StopAssetEditing();
-                }
-
-                foreach (var p in pendingCopies)
-                {
-                    Texture2D copy = AssetDatabase.LoadAssetAtPath<Texture2D>(p.CopyPath);
-                    p.Candidate.OptimizedTexture = copy != null ? copy : p.Candidate.SourceTexture;
-                    if (copy != null) SynAssetCache.RecordUsage(p.CopyPath);
-                }
+                Debug.Log(sb.ToString());
             }
         }
 
         /// <summary>
-        /// Fallback for textures without a TextureImporter (e.g. generated .asset textures):
-        /// area-average resize, then compress to the platform format chosen by the shared
-        /// format selector, stepping to a safer format where the cheap one would band.
+        /// The Avatar Compressor's per-texture decision and compression: size from the detail score (and from how large
+        /// the texture appears in the world), format from detail and alpha with the banding check, normal maps through
+        /// the layout conversion, all made from the original image file when there is one. Returns the original when
+        /// nothing would change.
         /// </summary>
-        private static Texture2D CreateCompressedCopy(TextureCandidate candidate, int targetWidth, int targetHeight, TextureFormatSelector formatSelector, TextureProcessor processor, SynTargetPlatform platform)
+        private static Texture2D Optimize(
+            TextureCandidate c,
+            SynTextureCompressorSettings s,
+            TextureProcessor processor,
+            ComplexityCalculator complexityCalc,
+            TextureFormatSelector formatSelector,
+            TextureFormatSelector formatOnlySelector,
+            TextureSourceCache sourceCache,
+            Dictionary<Texture2D, SynTexelDensityInfo> densities,
+            NormalMapPreprocessor normalPreprocessor,
+            SynTargetPlatform platform)
         {
-            Texture2D src = candidate.SourceTexture;
-
-            // BC/DXT formats require dimensions that are multiples of 4; skip rather than ship uncompressed
-            bool isMobile = platform == SynTargetPlatform.Android || platform == SynTargetPlatform.iOS;
-            if (!isMobile && (targetWidth % 4 != 0 || targetHeight % 4 != 0)) return null;
-
-            // The format is chosen from the resized pixels below; it follows from these inputs.
-            string hash = SynAssetCache.ComputeTextureHash(src, TextureHashTag, targetWidth, targetHeight,
-                $"Fallback_v2_{platform}_{candidate.ComplexityScore:F3}_{(candidate.IsNormalMap ? 1 : 0)}");
-            if (SynAssetCache.TryGetCachedAsset<Texture2D>(SynAssetCache.TexturesCategory, hash, out Texture2D cachedTex))
+            Texture2D src = c.SourceTexture;
+            var imported = new Vector2Int(src.width, src.height);
+            Vector2Int baseSize = imported;
+            if (!s.RespectImportMaxSize && sourceCache.TryGetCachedSize(src, out Vector2Int sourceSize))
             {
-                return cachedTex;
+                baseSize = TextureSourceCache.FitWithin(sourceSize, s.MaxResolution);
             }
 
-            Texture2D result = processor.ResizeSingle(src, new Vector2Int(targetWidth, targetHeight), candidate.IsNormalMap);
-            if (result == null) return null;
-
-            // Checked on the resized pixels: alpha that only existed in fine detail may be gone
-            bool hasAlpha = TextureFormatSelector.HasSignificantAlpha(result);
-            TextureFormat format = formatSelector.PredictFormat(candidate.IsNormalMap, candidate.ComplexityScore, hasAlpha);
-            if (candidate.IsNormalMap)
+            TextureAnalysisResult analysis = AnalysisResultHelper.BuildResult(c.ComplexityScore, baseSize.x, baseSize.y, c.IsEmission, c.IsNormalMap, complexityCalc, processor);
+            SynTexelDensityInfo? density = !c.FormatOnly && densities != null && densities.TryGetValue(src, out var measured) ? measured : (SynTexelDensityInfo?)null;
+            if (density.HasValue)
             {
-                new NormalMapPreprocessor().PrepareForCompression(result, src.format, format);
-            }
-            else
-            {
-                format = CompressionArtifactDetector.ChooseCleanFormat(result, format);
+                analysis = SynWorldTexelDensity.ApplyLimit(analysis, baseSize, density.Value, processor);
+                if (s.KeepVisibleDetail)
+                {
+                    analysis = SynWorldTexelDensity.ApplyFloor(analysis, baseSize, density.Value, s.MinDivisor, s.LowComplexityThreshold, processor);
+                }
             }
 
-            EditorUtility.CompressTexture(result, format, TextureCompressionQuality.Best);
-            result.wrapModeU = src.wrapModeU;
-            result.wrapModeV = src.wrapModeV;
-            result.filterMode = src.filterMode;
-            result.anisoLevel = src.anisoLevel;
-            result.name = $"{src.name}_opt_{targetWidth}x{targetHeight}";
-            return SynAssetCache.SaveCachedAsset(result, SynAssetCache.TexturesCategory, hash);
+            Vector2Int target = processor.CalculateTargetSize(baseSize, analysis);
+            if (c.FormatOnly)
+            {
+                target = new Vector2Int(TextureProcessor.EnsureMultipleOf4(imported.x), TextureProcessor.EnsureMultipleOf4(imported.y));
+            }
+            else if (!s.RespectImportMaxSize)
+            {
+                target = SynWorldTexelDensity.GateUpscale(target, imported, analysis.NormalizedComplexity, s.LowComplexityThreshold, density);
+            }
+            c.Note = density.HasValue ? $"{density.Value.DensityAt(target):F1} px/cm in the world (needs {density.Value.TargetDensity:F1})" : "size in the world not measured";
+
+            TextureFormatSelector selector = c.FormatOnly ? formatOnlySelector : formatSelector;
+            TextureFormat sourceFormat = src.format;
+
+            // Unity's import is already one compression of the source file; with the same size and format, keep it.
+            // Normal maps always go through the layout conversion.
+            if (!c.IsNormalMap && target == imported && selector.KeepsImportFormat(sourceFormat, null)) return src;
+
+            string hash = SynAssetCache.ComputeTextureHash(src, TextureHashTag, target.x, target.y,
+                $"{platform}_{s.Signature()}_{c.ComplexityScore:F3}_{(c.IsNormalMap ? 1 : 0)}{(c.IsEmission ? 1 : 0)}{(c.AlphaIsTransparency ? 1 : 0)}{(c.FormatOnly ? 1 : 0)}");
+            if (SynAssetCache.TryGetCachedAsset<Texture2D>(SynAssetCache.TexturesCategory, hash, out Texture2D cached)) return cached;
+
+            // Resize from the full-quality source when available; the normal-map layout is read from the same pixels
+            Texture2D source = sourceCache.Load(src);
+            bool fromSource = source != null;
+            NormalMapPreprocessor.SourceLayout layout = NormalMapPreprocessor.SourceLayout.Auto;
+            Texture2D resized;
+            try
+            {
+                if (c.IsNormalMap)
+                {
+                    layout = !fromSource
+                        ? NormalMapSourceLayoutDetector.Resolve(src, sourceFormat)
+                        : TextureSourceCache.IsRawNormalSource(src) ? NormalMapPreprocessor.SourceLayout.RGB : NormalMapSourceLayoutDetector.DetectDXTnmLike(source);
+                }
+                resized = processor.ResizeSingle(fromSource ? source : src, target, c.IsNormalMap);
+            }
+            finally
+            {
+                if (fromSource) UnityEngine.Object.DestroyImmediate(source);
+            }
+            if (resized == null) return src;
+
+            // Alpha is checked on the resized pixels: alpha that only existed in fine detail may be gone
+            bool hasAlpha = TextureFormatSelector.HasSignificantAlpha(resized);
+            TextureFormat format = selector.ResolveTargetFormat(sourceFormat, c.IsNormalMap, analysis.NormalizedComplexity, hasAlpha, null);
+            if (!c.IsNormalMap && s.AvoidCompressionArtifacts && selector.ChoosesFormat(sourceFormat, null))
+            {
+                format = CompressionArtifactDetector.ChooseCleanFormat(resized, format);
+            }
+
+            if (!c.IsNormalMap && target == imported && format == sourceFormat && TextureFormatInfo.IsCompressed(sourceFormat))
+            {
+                UnityEngine.Object.DestroyImmediate(resized);
+                return src;
+            }
+
+            bool preserveAlpha = c.IsNormalMap && NormalMapPreprocessor.ShouldPreserveSemanticAlpha(format, layout, hasAlpha);
+            Color32[] originalPixels = c.IsNormalMap && resized.isReadable ? resized.GetPixels32() : null;
+            if (resized.format != format && !TryCompress(resized, sourceFormat, format, c.IsNormalMap, preserveAlpha, layout, normalPreprocessor))
+            {
+                // Primary compression failed: restore the pixels and fall back like the Avatar Compressor
+                if (originalPixels != null)
+                {
+                    resized.SetPixels32(originalPixels);
+                    resized.Apply(resized.mipmapCount > 1);
+                }
+                TextureFormat fallback = TextureFormatSelector.ResolvePlatform(CompressionPlatform.Auto) == CompressionPlatform.Mobile ? TextureFormat.ASTC_6x6 : TextureFormat.DXT5;
+                if (!TryCompress(resized, sourceFormat, fallback, c.IsNormalMap, false, layout, normalPreprocessor))
+                {
+                    UnityEngine.Object.DestroyImmediate(resized);
+                    return src;
+                }
+            }
+
+            resized.wrapModeU = src.wrapModeU;
+            resized.wrapModeV = src.wrapModeV;
+            resized.filterMode = src.filterMode;
+            resized.anisoLevel = src.anisoLevel;
+            resized.name = $"{src.name}_opt_{resized.width}x{resized.height}";
+            if (resized.mipmapCount > 1)
+            {
+                // VRChat warns about textures without mipmap streaming
+                var serialized = new SerializedObject(resized);
+                SerializedProperty streaming = serialized.FindProperty("m_StreamingMipmaps");
+                if (streaming != null)
+                {
+                    streaming.boolValue = true;
+                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                }
+            }
+            return SynAssetCache.SaveCachedAsset(resized, SynAssetCache.TexturesCategory, hash);
+        }
+
+        private static bool TryCompress(Texture2D texture, TextureFormat sourceFormat, TextureFormat targetFormat, bool isNormalMap, bool preserveAlpha, NormalMapPreprocessor.SourceLayout layout, NormalMapPreprocessor normalPreprocessor)
+        {
+            try
+            {
+                if (isNormalMap) normalPreprocessor.PrepareForCompression(texture, sourceFormat, targetFormat, preserveAlpha, layout);
+                EditorUtility.CompressTexture(texture, targetFormat, TextureCompressionQuality.Best);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[SYN SCENE OPTIMIZER] Texture Complexity Compressor: could not compress '{texture.name}' to {targetFormat}: {e.Message}");
+                return false;
+            }
         }
 
         private static long EstimateGpuBytes(Texture2D tex)
@@ -638,30 +668,13 @@ namespace Synthos.SynSceneOptimizer
             return total;
         }
 
-        private static int FloorPowerOfTwo(int value)
-        {
-            int result = 32;
-            while (result * 2 <= value && result < 16384) result *= 2;
-            return result;
-        }
-
-        private static string GetImporterPlatformName(SynTargetPlatform platform)
-        {
-            switch (platform)
-            {
-                case SynTargetPlatform.Android: return "Android";
-                case SynTargetPlatform.iOS: return "iPhone";
-                default: return "Standalone";
-            }
-        }
-
         private const string ScoreCachePath = "Library/SynSceneOptimizer/TextureComplexityScores.txt";
 
-        // Identity hash covers the texture content and import settings; flags and algorithm version cover the analysis.
-        // v3: shared Synthos Texture Analysis, Combined strategy
-        private static string GetScoreKey(TextureCandidate c)
+        // Identity hash covers the texture content and import settings; flags, weights and algorithm version cover the
+        // analysis. v4: weights from the preset
+        private static string GetScoreKey(TextureCandidate c, string weights)
         {
-            return $"v3|{SynAssetCache.GetAssetIdentityHash(c.SourceTexture)}|n{(c.IsNormalMap ? 1 : 0)}|a{(c.AlphaIsTransparency ? 1 : 0)}";
+            return $"v4|{SynAssetCache.GetAssetIdentityHash(c.SourceTexture)}|n{(c.IsNormalMap ? 1 : 0)}|a{(c.AlphaIsTransparency ? 1 : 0)}|w{weights}";
         }
 
         private static Dictionary<string, float> LoadScoreCache()
