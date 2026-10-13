@@ -19,6 +19,10 @@ namespace Synthos.SynSceneOptimizer
             public bool StreamingWasOff;
             public bool MipmapsWereOff;
             public int OriginalMipFilter = -1;
+            // Max size lowered by Lighting Texture Size Limits: the original value, and the platform override it was
+            // set on ("" for the default setting)
+            public int OriginalMaxSize = -1;
+            public string MaxSizePlatform = "";
         }
 
         public static Dictionary<string, Entry> Load()
@@ -36,7 +40,9 @@ namespace Synthos.SynSceneOptimizer
                     {
                         StreamingWasOff = parts[1] == "1",
                         MipmapsWereOff = parts[2] == "1",
-                        OriginalMipFilter = int.TryParse(parts[3], out int filter) ? filter : -1
+                        OriginalMipFilter = int.TryParse(parts[3], out int filter) ? filter : -1,
+                        OriginalMaxSize = parts.Length > 4 && int.TryParse(parts[4], out int maxSize) ? maxSize : -1,
+                        MaxSizePlatform = parts.Length > 5 ? parts[5] : ""
                     };
                 }
             }
@@ -53,7 +59,7 @@ namespace Synthos.SynSceneOptimizer
             var lines = new List<string>(entries.Count);
             foreach (var kvp in entries)
             {
-                lines.Add($"{kvp.Key}\t{(kvp.Value.StreamingWasOff ? 1 : 0)}\t{(kvp.Value.MipmapsWereOff ? 1 : 0)}\t{kvp.Value.OriginalMipFilter}");
+                lines.Add($"{kvp.Key}\t{(kvp.Value.StreamingWasOff ? 1 : 0)}\t{(kvp.Value.MipmapsWereOff ? 1 : 0)}\t{kvp.Value.OriginalMipFilter}\t{kvp.Value.OriginalMaxSize}\t{kvp.Value.MaxSizePlatform}");
             }
             File.WriteAllLines(JournalPath, lines);
         }
