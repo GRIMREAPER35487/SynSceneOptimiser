@@ -666,6 +666,14 @@ namespace Synthos.SynSceneOptimizer
                     ConfigureMochiePalette(paletteMat, metallicTex, emissionTex);
                 }
             }
+
+            // The palette material is a copy of the group's first material, so it inherits textures for features the
+            // palette turns off (e.g. Mochie's 8K rain sheet). Nothing else references a generated material.
+            if (GhostTexturePurgerPass.ClearsUnsampledTextures)
+            {
+                SynShaderTextureUsage.ClearUnsampledTextures(paletteMat, EditorUserBuildSettings.activeBuildTarget);
+                SynShaderTextureUsage.SaveCache();
+            }
         }
 
         /// <summary>

@@ -2,6 +2,12 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.8] - 2026-10-12
+
+### Fixed
+- **Color Palette materials kept textures for features they turn off** - A palette material starts as a copy of the group's first material, so with Mochie Standard it kept the 8K rain sheet, droplet mask and SSR noise and pulled them into the build for every palettized object (about 1,000 objects in a test world). Generated palette materials now drop textures their shader variant never samples (follows the Ghost Texture Purger's "Clear Disabled Feature Textures" setting).
+- **Ghost Texture Purger skipped every material an Udon behaviour referenced** - It now reads each Udon program and only skips materials for programs that can actually change shader keywords (`EnableKeyword`, `DisableKeyword`, `SetKeyword`, `shaderKeywords`, ...). Such a program protects the materials it references, renderers it references, and renderers on GameObjects it references or sits on. Programs that only set colors, toggle objects, play sounds and so on no longer block the cleanup. A program that can't be read still counts as able to change keywords.
+
 ## [1.2.0-beta.7] - 2026-10-12
 
 ### Fixed
