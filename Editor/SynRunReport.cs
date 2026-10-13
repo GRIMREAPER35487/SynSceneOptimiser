@@ -43,6 +43,8 @@ namespace Synthos.SynSceneOptimizer
         public long TextureAfterBytes = -1;
         public long MeshBeforeBytes = -1;
         public long MeshAfterBytes = -1;
+        public long EnvironmentBeforeBytes = -1;
+        public long EnvironmentAfterBytes = -1;
         public List<SynPassResult> Passes = new List<SynPassResult>();
 
         public void Save()
@@ -114,6 +116,8 @@ namespace Synthos.SynSceneOptimizer
                 DrawDelta("Total VRAM", report.VramBeforeBytes, report.VramAfterBytes);
                 DrawDelta("Textures", report.TextureBeforeBytes, report.TextureAfterBytes);
                 DrawDelta("Meshes", report.MeshBeforeBytes, report.MeshAfterBytes);
+                DrawDelta("Environment", report.EnvironmentBeforeBytes, report.EnvironmentAfterBytes,
+                    "Lightmaps, baked reflection probes and skybox textures.");
                 EditorGUILayout.EndVertical();
             }
 
@@ -150,13 +154,13 @@ namespace Synthos.SynSceneOptimizer
             EditorGUILayout.EndScrollView();
         }
 
-        private static void DrawDelta(string label, long before, long after)
+        private static void DrawDelta(string label, long before, long after, string tooltip = null)
         {
             if (before < 0 || after < 0) return;
             double mbBefore = before / (1024.0 * 1024.0);
             double mbAfter = after / (1024.0 * 1024.0);
             double percent = before > 0 ? (after - before) * 100.0 / before : 0;
-            EditorGUILayout.LabelField(label, $"{mbBefore:F1} MB  ->  {mbAfter:F1} MB  ({percent:+0;-0;0}%)");
+            EditorGUILayout.LabelField(new GUIContent(label, tooltip), new GUIContent($"{mbBefore:F1} MB  ->  {mbAfter:F1} MB  ({percent:+0;-0;0}%)"));
         }
     }
 }

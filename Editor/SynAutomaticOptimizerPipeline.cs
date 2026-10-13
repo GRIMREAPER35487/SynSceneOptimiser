@@ -298,9 +298,10 @@ namespace Synthos.SynSceneOptimizer
         }
 
         /// <summary>
-        /// Dry run: saves a temporary copy of the active scene, runs the pipeline on that copy, measures VRAM before
-        /// and after, then closes and deletes the copy. The user's scene is never modified. Cached assets created
-        /// along the way are kept and reused by the next real build.
+        /// Dry run: saves a temporary copy of the active scene, opens it on its own, measures VRAM before and after
+        /// running the pipeline on it, then reopens the user's scenes and deletes the copy. The user's scene is never
+        /// modified. With only the copy open, lightmaps and reflection probes of other open scenes are not counted.
+        /// Cached assets created along the way are kept and reused by the next real build.
         /// </summary>
         public static void RunPreview()
         {
@@ -312,8 +313,10 @@ namespace Synthos.SynSceneOptimizer
 
             Scene source = SceneManager.GetActiveScene();
             if (!source.IsValid() || !source.isLoaded) return;
+            if (!PrepareOpenScenesForPreview()) return;
 
-            SynVramTotals before = SynVRAMAnalyzerWindow.MeasureActiveScene();
+            SceneSetup[] openScenes = EditorSceneManager.GetSceneManagerSetup();
+            string sceneName = source.name;
 
             string tempPath = SynAssetCache.TransientCachePath + "SynOptimizerPreview.unity";
             if (!EditorSceneManager.SaveScene(source, tempPath, true))
@@ -325,8 +328,8 @@ namespace Synthos.SynSceneOptimizer
             Scene preview = default;
             try
             {
-                preview = EditorSceneManager.OpenScene(tempPath, OpenSceneMode.Additive);
-                SceneManager.SetActiveScene(preview);
+                preview = EditorSceneManager.OpenScene(tempPath, OpenSceneMode.Single);
+                SynVramTotals before = SynVRAMAnalyzerWindow.MeasureActiveScene();
 
                 RunPipelineOnScene(preview, SynRunMode.Preview);
 
@@ -334,26 +337,65 @@ namespace Synthos.SynSceneOptimizer
                 var report = SynRunReport.Load();
                 if (report != null)
                 {
-                    report.SceneName = source.name;
+                    report.SceneName = sceneName;
                     report.VramBeforeBytes = before.Total;
                     report.VramAfterBytes = after.Total;
                     report.TextureBeforeBytes = before.Textures;
                     report.TextureAfterBytes = after.Textures;
                     report.MeshBeforeBytes = before.Meshes;
                     report.MeshAfterBytes = after.Meshes;
+                    report.EnvironmentBeforeBytes = before.Environment;
+                    report.EnvironmentAfterBytes = after.Environment;
                     report.Save();
                 }
             }
             finally
             {
-                if (source.IsValid()) SceneManager.SetActiveScene(source);
-                if (preview.IsValid()) EditorSceneManager.CloseScene(preview, true);
+                try
+                {
+                    // Closes the copy and reopens the user's scenes as they were, with the same active scene
+                    EditorSceneManager.RestoreSceneManagerSetup(openScenes);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[SYN SCENE OPTIMIZER] Preview: could not reopen your scenes ({e.Message}). Open them again from the Project window.");
+                }
                 AssetDatabase.DeleteAsset(tempPath);
                 SynAssetCache.ClearMemoryCache();
                 SynSceneQuery.ClearCache();
             }
 
             SynRunReportWindow.ShowReport();
+        }
+
+        /// <summary>
+        /// The preview closes the open scenes while it runs and reopens them from disk afterwards, so every open scene
+        /// must be saved. Asks to save unsaved changes; returns false if the user cancels or a scene was never saved.
+        /// </summary>
+        private static bool PrepareOpenScenesForPreview()
+        {
+            var unsaved = new List<Scene>();
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                Scene scene = SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded) continue;
+                if (string.IsNullOrEmpty(scene.path))
+                {
+                    EditorUtility.DisplayDialog("Preview Optimization",
+                        "Save your scene first. The preview closes your open scenes while it runs and reopens them afterwards.", "OK");
+                    return false;
+                }
+                if (scene.isDirty) unsaved.Add(scene);
+            }
+
+            if (unsaved.Count == 0) return true;
+            if (!EditorUtility.DisplayDialog("Preview Optimization",
+                    "The preview closes your open scenes while it runs and reopens them afterwards, so your unsaved changes need to be saved first.",
+                    "Save and Preview", "Cancel"))
+            {
+                return false;
+            }
+            return EditorSceneManager.SaveScenes(unsaved.ToArray());
         }
 
         private static List<SynOptimizationPass> GetSortedPasses()

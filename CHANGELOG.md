@@ -2,6 +2,14 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.2] - 2026-10-12
+
+### Fixed
+- **Preview under-reported the VRAM saving** - The preview optimized a copy of the scene opened next to yours, and the "after" measurement counted the lightmaps and baked reflection probes of both scenes, so the total barely went down even when textures and meshes shrank. The preview now closes your scenes, measures before and after on the copy alone, and reopens your scenes when it's done. Unsaved changes are saved first (it asks).
+
+### Added
+- **Environment row in the run report** - Lightmaps, baked reflection probes and skybox textures, so Total VRAM = Textures + Meshes + Environment.
+
 ## [1.2.0-beta.1] - 2026-10-12
 
 ### Changed
