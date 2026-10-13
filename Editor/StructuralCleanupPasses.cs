@@ -401,8 +401,9 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
-        // Materials a script could change keywords on: referenced by a script directly, or used by a renderer a
-        // script references (renderer.material). UdonBehaviour public variables are serialized references too.
+        // Materials a script could change keywords on: referenced by an Udon behaviour directly, or used by a renderer
+        // it references (renderer.material). Only Udon runs in a VRChat world; other components that list renderers
+        // (e.g. Bakery's lightmap storage, which lists every lightmapped renderer) can't change keywords at runtime.
         private static HashSet<Material> CollectScriptReachableMaterials(Scene scene)
         {
             var materials = new HashSet<Material>();
@@ -410,7 +411,7 @@ namespace Synthos.SynSceneOptimizer
             {
                 foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
                 {
-                    if (behaviour == null) continue;
+                    if (behaviour == null || !IsUdonBehaviour(behaviour)) continue;
                     SerializedProperty iterator = new SerializedObject(behaviour).GetIterator();
                     while (iterator.Next(true))
                     {
@@ -431,6 +432,16 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
             return materials;
+        }
+
+        // UdonBehaviour, or an UdonSharp proxy behaviour (its fields mirror the UdonBehaviour's public variables)
+        private static bool IsUdonBehaviour(MonoBehaviour behaviour)
+        {
+            for (System.Type type = behaviour.GetType(); type != null; type = type.BaseType)
+            {
+                if (type.FullName == "VRC.Udon.UdonBehaviour" || type.Name == "UdonSharpBehaviour") return true;
+            }
+            return false;
         }
 
         private bool HasPropertyOnShader(Shader shader, string propName)

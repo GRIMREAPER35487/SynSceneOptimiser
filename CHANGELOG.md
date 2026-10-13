@@ -2,6 +2,11 @@
 
 All notable changes to Synthos Scene Optimizer. Versions follow [Semantic Versioning](https://semver.org/); `-beta.N` releases are pre-releases and only appear in VCC/ALCOM with "Show pre-release packages" enabled.
 
+## [1.2.0-beta.7] - 2026-10-12
+
+### Fixed
+- **Ghost Texture Purger skipped almost every material in Bakery-lit worlds** - Materials that a script could reach were left alone, but any component counted, and Bakery's lightmap storage lists every lightmapped renderer, so nearly all materials were skipped (a world with 2,100 lightmapped renderers kept its 43 MB Mochie rain sheet). Only Udon behaviours (including UdonSharp) count now, since they are the only scripts that run in a VRChat world.
+
 ## [1.2.0-beta.6] - 2026-10-12
 
 ### Added
