@@ -668,8 +668,9 @@ namespace Synthos.SynSceneOptimizer
             }
 
             // The palette material is a copy of the group's first material, so it inherits textures for features the
-            // palette turns off (e.g. Mochie's 8K rain sheet). Nothing else references a generated material.
-            if (GhostTexturePurgerPass.ClearsUnsampledTextures)
+            // palette turns off (e.g. Mochie's 8K rain sheet, which the Unused Texture Shrinker may have shrunk because
+            // nothing could draw it). Nothing else references a generated material, so no script can turn them back on.
+            if (SynSceneOptimizerSettings.GetBool("Pass_SynUnusedTextureShrinkPass_Enabled", true))
             {
                 SynShaderTextureUsage.ClearUnsampledTextures(paletteMat, EditorUserBuildSettings.activeBuildTarget);
                 SynShaderTextureUsage.SaveCache();

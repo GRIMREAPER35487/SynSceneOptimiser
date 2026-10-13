@@ -46,6 +46,37 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
+        /// <summary>
+        /// The shader a material with <paramref name="shader"/> ships with on the current build target after this
+        /// pass, or null if it isn't swapped (desktop target, pass off, or not a Mochie Standard variant).
+        /// </summary>
+        public static Shader GetShippedFallback(Shader shader)
+        {
+            if (shader == null || !SynSceneOptimizerSettings.GetBool("Pass_MobileShaderFallbackPass_Enabled", true)) return null;
+            BuildTarget activeTarget = EditorUserBuildSettings.activeBuildTarget;
+            if (activeTarget != BuildTarget.Android && activeTarget != BuildTarget.iOS) return null;
+
+            string name = GetMobileShaderName(shader.name,
+                SynSceneOptimizerSettings.GetBool("Fallback_IncludeStandard", true),
+                SynSceneOptimizerSettings.GetBool("Fallback_IncludeStandardLite", true));
+            return name != null ? Shader.Find(name) : null;
+        }
+
+        private static string GetMobileShaderName(string shaderName, bool includeStandard, bool includeLite)
+        {
+            if (includeStandard)
+            {
+                if (shaderName == "Mochie/Standard") return "Mochie/Standard Mobile";
+                if (shaderName == "Synthos/Mochie/Standard") return "Synthos/Mochie/Standard Mobile";
+            }
+            if (includeLite)
+            {
+                if (shaderName == "Mochie/Standard Lite") return "Mochie/Standard Mobile";
+                if (shaderName == "Synthos/Mochie/Standard Lite") return "Synthos/Mochie/Standard Mobile";
+            }
+            return null;
+        }
+
         public override void Execute(Scene scene, List<Renderer> renderers)
         {
             BuildTarget activeTarget = EditorUserBuildSettings.activeBuildTarget;
@@ -79,34 +110,7 @@ namespace Synthos.SynSceneOptimizer
                     Shader currentShader = matState.TargetShader;
                     if (currentShader == null) continue;
 
-                    string shaderName = currentShader.name;
-                    string targetMobileShaderName = null;
-
-                    // Evaluate Standard Variants
-                    if (includeStandard)
-                    {
-                        if (shaderName == "Mochie/Standard")
-                        {
-                            targetMobileShaderName = "Mochie/Standard Mobile";
-                        }
-                        else if (shaderName == "Synthos/Mochie/Standard")
-                        {
-                            targetMobileShaderName = "Synthos/Mochie/Standard Mobile";
-                        }
-                    }
-
-                    // Evaluate Standard Lite Variants (only check if a target wasn't already assigned)
-                    if (includeLite && targetMobileShaderName == null)
-                    {
-                        if (shaderName == "Mochie/Standard Lite")
-                        {
-                            targetMobileShaderName = "Mochie/Standard Mobile";
-                        }
-                        else if (shaderName == "Synthos/Mochie/Standard Lite")
-                        {
-                            targetMobileShaderName = "Synthos/Mochie/Standard Mobile";
-                        }
-                    }
+                    string targetMobileShaderName = GetMobileShaderName(currentShader.name, includeStandard, includeLite);
 
                     if (targetMobileShaderName != null)
                     {

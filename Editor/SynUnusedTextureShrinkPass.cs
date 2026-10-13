@@ -22,7 +22,9 @@ namespace Synthos.SynSceneOptimizer
         public override string Name => "Unused Texture Shrinker";
         public override string Description => "Imports textures that no material in the world can ever sample (e.g. a rain texture on materials with rain off) at 32x32 for the build. Import settings are restored afterwards.";
         public override string Category => "Memory & Assets";
-        public override int Priority => 1100; // After the mobile shader fallback (1000), so the shipped shader is checked
+        // Before the texture compressor (45), palettes (50) and mip streaming (95): they then see a 32x32 texture and
+        // leave it alone instead of making copies of it
+        public override int Priority => 24;
         public override bool RunInPreview => false; // Temporarily edits project import settings
 
         private const int ShrunkSize = 32;
@@ -166,8 +168,8 @@ namespace Synthos.SynSceneOptimizer
             }
         }
 
-        // True if any slot holding the texture could be sampled: by the material's shader as it ships (after the
-        // mobile fallback) or as authored, with its keywords or any keyword a script can change
+        // True if any slot holding the texture could be sampled, with the material's keywords or any keyword a script
+        // can change, by its shader as authored or by the mobile shader the Mobile Shader Fallback swaps it to later
         private static bool CanBeDrawn(List<(Material material, string property)> uses, SynUdonUsageScan scan, BuildTarget target)
         {
             foreach (var (material, property) in uses)
@@ -177,12 +179,8 @@ namespace Synthos.SynSceneOptimizer
 
                 if (SynShaderTextureUsage.CanSample(material.shader, material.shaderKeywords, property, scan, target) != false) return true;
 
-                SynVirtualMaterialState staged = SynPipelineCompactor.TryGetStagedState(material);
-                if (staged != null && staged.TargetShader != null && !staged.UnsampledTextureProperties.Contains(property))
-                {
-                    var keywords = new List<string>(staged.TrackedKeywords);
-                    if (SynShaderTextureUsage.CanSample(staged.TargetShader, keywords, property, scan, target) != false) return true;
-                }
+                Shader shipped = MobileShaderFallbackPass.GetShippedFallback(material.shader);
+                if (shipped != null && SynShaderTextureUsage.CanSample(shipped, material.shaderKeywords, property, scan, target) != false) return true;
             }
             return false;
         }

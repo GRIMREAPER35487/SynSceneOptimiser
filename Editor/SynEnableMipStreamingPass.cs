@@ -141,9 +141,7 @@ namespace Synthos.SynSceneOptimizer
                 {
                     if (ShaderUtil.GetPropertyType(shader, i) == ShaderUtil.ShaderPropertyType.TexEnv)
                     {
-                        string propName = ShaderUtil.GetPropertyName(shader, i);
-                        if (SynPipelineCompactor.IsUnsampledSlot(mat, propName)) continue; // Emptied by the Ghost Texture Purger
-                        Texture tex = mat.GetTexture(propName);
+                        Texture tex = mat.GetTexture(ShaderUtil.GetPropertyName(shader, i));
                         if (tex is Texture2D tex2D)
                         {
                             candidateTextures.Add(tex2D);

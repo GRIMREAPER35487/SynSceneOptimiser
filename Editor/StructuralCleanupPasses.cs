@@ -262,40 +262,14 @@ namespace Synthos.SynSceneOptimizer
     {
         public override string Id => "GhostTexturePurgerPass";
         public override string Name => "Ghost Texture Purger";
-        public override string Description => "Cleans up unused texture serialized references inside material data files to save VRAM, including textures behind shader features that are turned off.";
+        public override string Description => "Cleans up unused texture serialized references inside material data files to save VRAM.";
         public override string Category => "Structural Cleanup";
         public override int Priority => 25;
 
-        private const string UnsampledKey = "GhostPurger_UnsampledSlots";
-
-        /// <summary>Whether textures behind disabled shader features are cleared (also used for generated materials).</summary>
-        public static bool ClearsUnsampledTextures =>
-            SynSceneOptimizerSettings.GetBool("Pass_GhostTexturePurgerPass_Enabled", true) && SynSceneOptimizerSettings.GetBool(UnsampledKey, true);
-        // Compiling variants is slow on the first build; the rest is picked up on later builds from the cache
-        private const double CompileBudgetSeconds = 180;
-
-        public override void DrawGUI(SynSceneOptimizerSettings settings)
-        {
-            bool unsampled = SynSceneOptimizerSettings.GetBool(UnsampledKey, true);
-            bool newUnsampled = EditorGUILayout.Toggle(new GUIContent("Clear Disabled Feature Textures", "Also clears textures the material's shader never samples because their feature is turned off (e.g. a rain or detail texture with rain/detail disabled). Each shader variant is compiled once to check, then cached. Udon scripts are read to find every shader keyword they can turn on or off, and a texture is only cleared if none of those would make the shader read it."), unsampled);
-            if (newUnsampled != unsampled)
-            {
-                SynSceneOptimizerSettings.SetBool(UnsampledKey, newUnsampled);
-            }
-        }
-
         public override void Execute(Scene scene, List<Renderer> renderers)
         {
-            bool checkUnsampled = SynSceneOptimizerSettings.GetBool(UnsampledKey, true);
-            BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
-            SynUdonUsageScan scan = checkUnsampled ? SynUdonUsageScan.Run(scene) : null;
-
             HashSet<Material> processed = new HashSet<Material>();
             int purgedCount = 0;
-            int unsampledCount = 0;
-            int skippedForBudget = 0;
-            var unsampledTextures = new HashSet<Texture>();
-            var compileTimer = new System.Diagnostics.Stopwatch();
 
             foreach (Renderer r in renderers)
             {
@@ -316,7 +290,6 @@ namespace Synthos.SynSceneOptimizer
                     SerializedProperty texEnvs = serializedMat.FindProperty("m_SavedProperties.m_TexEnvs");
                     if (texEnvs != null && texEnvs.isArray)
                     {
-                        var keywords = new List<string>(matState.TrackedKeywords);
                         bool clearedAny = false;
                         for (int i = texEnvs.arraySize - 1; i >= 0; i--)
                         {
@@ -328,36 +301,12 @@ namespace Synthos.SynSceneOptimizer
                                 // Only slots that still hold a texture cost anything; empty ghost slots are left alone
                                 SerializedProperty texProp = prop.FindPropertyRelative("second.m_Texture");
                                 bool holdsTexture = texProp != null && texProp.objectReferenceValue != null;
-                                if (!holdsTexture || matState.TargetShader == null) continue;
-
-                                if (!HasPropertyOnShader(matState.TargetShader, texPropName))
+                                if (holdsTexture && matState.TargetShader != null && !HasPropertyOnShader(matState.TargetShader, texPropName))
                                 {
                                     matState.PurgedTextureProperties.Add(texPropName);
                                     matState.IsDirty = true;
                                     clearedAny = true;
                                     purgedCount++;
-                                    continue;
-                                }
-
-                                if (!checkUnsampled || scan.KeywordsUnknown) continue;
-                                // A script that reads this slot out of a material could show the texture elsewhere
-                                if (scan.TextureReadsUnknown || scan.TextureReads.Contains(texPropName)) continue;
-
-                                bool allowCompile = compileTimer.Elapsed.TotalSeconds < CompileBudgetSeconds;
-                                compileTimer.Start();
-                                bool? canSample = SynShaderTextureUsage.CanSample(matState.TargetShader, keywords, texPropName, scan, target, allowCompile);
-                                compileTimer.Stop();
-                                if (canSample == null && !allowCompile) skippedForBudget++;
-
-                                // The shader declares the slot, but no variant this material can be in reads it
-                                if (canSample == false)
-                                {
-                                    matState.UnsampledTextureProperties.Add(texPropName);
-                                    matState.TrackedTextures[texPropName] = null;
-                                    matState.IsDirty = true;
-                                    clearedAny = true;
-                                    unsampledCount++;
-                                    unsampledTextures.Add(texProp.objectReferenceValue as Texture);
                                 }
                             }
                         }
@@ -373,42 +322,12 @@ namespace Synthos.SynSceneOptimizer
                 }
             }
 
-            SynShaderTextureUsage.SaveCache();
-
             if (purgedCount > 0)
             {
                 SynPipelineCompactor.LogChange(
                     "Ghost Texture Purger",
                     string.Format("Cleared {0} unused texture references from material serialization blocks.", purgedCount)
                 );
-            }
-
-            if (unsampledCount > 0)
-            {
-                var largest = new List<Texture>(unsampledTextures);
-                largest.RemoveAll(t => t == null);
-                largest.Sort((a, b) => ((long)b.width * b.height).CompareTo((long)a.width * a.height));
-                var names = new List<string>();
-                for (int i = 0; i < largest.Count && i < 3; i++) names.Add($"{largest[i].name} ({largest[i].width}x{largest[i].height})");
-
-                SynPipelineCompactor.LogChange(
-                    "Ghost Texture Purger",
-                    $"Cleared {unsampledCount} texture slots whose shader feature is turned off ({unsampledTextures.Count} distinct textures, largest: {string.Join(", ", names)}). A texture leaves the build once nothing else references it."
-                );
-            }
-
-            if (scan != null && scan.KeywordsUnknown)
-            {
-                Debug.Log($"[SYN SCENE OPTIMIZER] Ghost Texture Purger: textures behind disabled shader features were kept, because a script could turn on any feature: {string.Join("; ", scan.UnknownReasons)}.");
-            }
-            else if (scan != null && scan.Keywords.Count > 0)
-            {
-                Debug.Log($"[SYN SCENE OPTIMIZER] Ghost Texture Purger: Udon scripts can set these shader keywords, which were checked too: {string.Join(", ", scan.Keywords)}.");
-            }
-
-            if (skippedForBudget > 0)
-            {
-                Debug.Log($"[SYN SCENE OPTIMIZER] Ghost Texture Purger: checked shaders for {compileTimer.Elapsed.TotalSeconds:F0}s; {skippedForBudget} materials will be checked on the next build (results are cached).");
             }
         }
 
