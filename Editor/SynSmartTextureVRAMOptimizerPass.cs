@@ -227,7 +227,6 @@ namespace Synthos.SynSceneOptimizer
                     if (ShaderUtil.GetPropertyType(mat.shader, i) != ShaderUtil.ShaderPropertyType.TexEnv) continue;
 
                     string propName = ShaderUtil.GetPropertyName(mat.shader, i);
-                    if (SynPipelineCompactor.IsUnsampledSlot(mat, propName)) continue; // Emptied by the Ghost Texture Purger
                     Texture tex = mat.GetTexture(propName);
                     bool usedAsTransparency = AlphaCoverage.IsCoverage(mat, propName);
 
@@ -467,7 +466,6 @@ namespace Synthos.SynSceneOptimizer
                         {
                             if (ShaderUtil.GetPropertyType(mat.shader, i) != ShaderUtil.ShaderPropertyType.TexEnv) continue;
                             string propName = ShaderUtil.GetPropertyName(mat.shader, i);
-                            if (SynPipelineCompactor.IsUnsampledSlot(mat, propName)) continue;
                             Texture tex = mat.GetTexture(propName);
                             if (tex is Texture2D tex2D && candidateMap.TryGetValue(tex2D, out var candidate))
                             {
